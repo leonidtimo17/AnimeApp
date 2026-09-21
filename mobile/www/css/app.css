@@ -38,7 +38,7 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 .btn.on { border-color: var(--accent); color: var(--accent); }
 
 /* Ленты и сетки карточек */
-.strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+.strip { position: relative; display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
 .strip::-webkit-scrollbar { display: none; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px 12px; }
 .card { width: 150px; flex: none; position: relative; }

@@ -291,7 +291,9 @@ const VIEWS = {
         <div class="poster" style="${x.poster ? `background-image:url('${esc(x.poster)}')` : ""}"></div>
         <div class="l">${esc(x.label)} · ${x.year || "анонс"}</div><div class="nm">${esc(x.name)}</div></div>`).join("")}</div>`;
       $("#seasons .strip").onclick = (ev) => { const s = ev.target.closest("[data-i]"); const x = s && entries[+s.dataset.i]; if (x && !x.current) show("details", x.releaseId); };
-      const cur = $("#seasons .cur"); if (cur) cur.scrollIntoView({ inline: "center", block: "nearest" });
+      // Прокручиваем только ленту (scrollIntoView дёргал бы и всю страницу)
+      const cur = $("#seasons .cur"), strip = $("#seasons .strip");
+      if (cur) strip.scrollLeft = cur.offsetLeft - strip.clientWidth / 2 + cur.clientWidth / 2;
     });
 
     // озвучки и серии

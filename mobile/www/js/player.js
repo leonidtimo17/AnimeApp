@@ -47,9 +47,10 @@ async function measure(url) {
  */
 export function open(opts) {
   const root = document.getElementById("player");
+  // Сначала закрываем предыдущий плеер (смена озвучки/сезона), иначе он спрячет новый.
+  close.current?.(false);
   root.hidden = false;
   root.innerHTML = "";
-  close.current?.(false);
   const ctl = opts.dub.native ? nativePlayer(root, opts) : kodikPlayer(root, opts);
   close.current = (notify = true) => {
     ctl.destroy();
