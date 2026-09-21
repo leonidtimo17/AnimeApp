@@ -60,76 +60,145 @@ class Bridge:
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:FA;src:url(data:font/ttf;base64,%%FONT%%)}
 *{box-sizing:border-box} html,body{margin:0;height:100%;background:#000;color:#f2f2f5;
-font-family:"Segoe UI",sans-serif;overflow:hidden}
-#bar{height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#141418;border-bottom:1px solid #2a2a33}
-#title{font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}
-#dub{color:#9a9aa6;font-size:13px;white-space:nowrap}
-.sp{flex:1}
-button,select{background:#24242c;color:#f2f2f5;border:1px solid #34343f;border-radius:9px;padding:7px 13px;
-font:600 13px "Segoe UI";cursor:pointer}
-button:hover,select:hover{background:#30303a} button:disabled{opacity:.4;cursor:default}
-#next{background:#ff6a1a;border:none}
-#frame{position:absolute;top:56px;left:0;right:0;bottom:0;width:100%;height:calc(100% - 56px);border:0}
-#toast{position:absolute;right:24px;bottom:90px;display:none;gap:10px}
-#toast button{padding:12px 20px;font-size:14px;border-radius:12px}
+font-family:"Segoe UI",sans-serif;overflow:hidden;user-select:none}
+body{display:flex;flex-direction:column}
+.fa{font-family:FA;font-weight:900;font-style:normal}
+#stage{position:relative;flex:1;min-height:0}
+#frame{position:absolute;inset:0;width:100%;height:100%;border:0}
 #msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#9a9aa6;font-size:16px}
+/* Своя панель управления под видео (поверх iframe нельзя: он забирает клики и движения мыши) */
+#panel{background:#101014;border-top:1px solid #24242c;padding:8px 16px 10px}
+#seek{position:relative;height:22px;cursor:pointer;touch-action:none}
+#seek .tr,#seek .pl{position:absolute;left:0;top:9px;height:4px;border-radius:2px}
+#seek .tr{right:0;background:rgba(255,255,255,.22)} #seek .pl{background:#ff6a1a;width:0}
+#seek .kn{position:absolute;top:4px;width:14px;height:14px;margin-left:-7px;border-radius:7px;background:#fff;left:0}
+#seek:hover .tr,#seek:hover .pl{top:8px;height:6px}
+#tip{position:absolute;bottom:24px;transform:translateX(-50%);background:rgba(0,0,0,.85);padding:2px 8px;border-radius:6px;
+font-size:12px;font-weight:600;display:none;white-space:nowrap}
+.row{display:flex;align-items:center;gap:4px;margin-top:2px}
+.sp{flex:1}
+button,select{background:none;color:#f2f2f5;border:0;border-radius:9px;padding:8px 11px;font:600 14px "Segoe UI";cursor:pointer}
+button .fa{font-size:17px} button:hover,select:hover{background:rgba(255,255,255,.1)}
+button:disabled{opacity:.35;cursor:default;background:none}
+#play .fa{font-size:20px}
+select{background:#1c1c22;border:1px solid #2c2c35}
+#time{font-weight:600;font-size:14px;margin:0 10px;color:#d8d8e0;font-variant-numeric:tabular-nums}
+#skip{border:1px solid #34343f}
+#ad{color:#ffb070;font-size:13px;font-weight:600;display:none;margin-right:8px}
+body.ad #ad{display:block} body.ad .ctl{opacity:.35;pointer-events:none}
+#toast{position:absolute;right:22px;bottom:20px;display:none;gap:10px}
+#toast button{padding:12px 20px;font-size:14px;border-radius:12px;background:rgba(20,20,24,.92);border:1px solid rgba(255,255,255,.3)}
+#toast #go{background:#ff6a1a;border-color:#ff6a1a}
+#osd{position:absolute;left:50%;top:18%;transform:translateX(-50%);background:rgba(0,0,0,.72);border-radius:12px;
+padding:10px 20px;font-weight:700;font-size:16px;display:none}
 </style></head><body>
-<div id="bar">
-  <div id="title"></div><div id="dub"></div><div class="sp"></div>
-  <button id="skip" title="Пропустить заставку">+85 с</button>
-  <button id="prev">Пред.</button>
-  <select id="eps"></select>
-  <button id="next">След. серия</button>
+<div id="stage">
+  <div id="msg">Загрузка…</div>
+  <iframe id="frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
+  <div id="osd"></div>
+  <div id="toast"><button id="stay">Смотреть титры</button><button id="go"></button></div>
 </div>
-<div id="msg">Загрузка…</div>
-<iframe id="frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
-<div id="toast"><button id="stay">Остаться</button><button id="go" style="background:#ff6a1a;border:none"></button></div>
+<div id="panel">
+  <div id="seek" class="ctl"><div class="tr"></div><div class="pl"></div><div class="kn"></div><div id="tip"></div></div>
+  <div class="row">
+    <button id="prev" title="Предыдущая серия (P)"><i class="fa">&#xf048;</i></button>
+    <button id="rw" class="ctl" title="Назад на 10 с (←)"><i class="fa">&#xf2ea;</i></button>
+    <button id="play" class="ctl" title="Пауза / воспроизведение (пробел)"><i class="fa">&#xf04b;</i></button>
+    <button id="ff" class="ctl" title="Вперёд на 10 с (→)"><i class="fa">&#xf2f9;</i></button>
+    <button id="next" title="Следующая серия (N)"><i class="fa">&#xf051;</i></button>
+    <span id="time">0:00 / 0:00</span>
+    <select id="eps" title="Серия"></select>
+    <div class="sp"></div>
+    <span id="ad">Идёт реклама Kodik…</span>
+    <button id="skip" class="ctl" title="Пропустить заставку — вперёд на 85 с (S)"><i class="fa">&#xf04e;</i>&nbsp; Пропустить заставку</button>
+  </div>
+</div>
 <script>
-let job, idx = 0, pos = 0, dur = 0, lastSent = 0, seekTo = 0, timer = null, count = 0;
+let job, idx = 0, pos = 0, dur = 0, lastSent = 0, seekTo = 0, timer = null, count = 0, playing = false, dragging = false;
 const $ = id => document.getElementById(id);
 const api = () => window.pywebview.api;
+const PLAY = '<i class="fa">&#xf04b;</i>', PAUSE = '<i class="fa">&#xf04c;</i>';
+function fmt(s){ s = Math.max(0, Math.floor(s||0)); const h = Math.floor(s/3600), m = Math.floor(s/60)%60, x = s%60;
+  return h ? `${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}` : `${m}:${String(x).padStart(2,'0')}`; }
 function cmd(v){ $('frame').contentWindow.postMessage({key:'kodik_player_api', value:v}, '*'); }
+let osdT; function osd(t){ const o=$('osd'); o.textContent=t; o.style.display='block'; clearTimeout(osdT); osdT=setTimeout(()=>o.style.display='none',1000); }
 function save(force){ if (dur > 0 && pos > 5 && (force || Date.now() - lastSent > 5000)) {
   lastSent = Date.now(); api().progress(idx, pos, dur); } }
+function render(){
+  $('time').textContent = `${fmt(pos)} / ${fmt(dur)}`;
+  if (!dragging && dur) { const f = Math.min(1, pos/dur); $('seek').querySelector('.pl').style.width = f*100+'%'; $('seek').querySelector('.kn').style.left = f*100+'%'; }
+  $('play').innerHTML = playing ? PAUSE : PLAY;
+}
+function seek(s){ s = Math.max(0, Math.min(dur ? dur - 1 : s, s)); cmd({method:'seek', seconds: Math.floor(s)}); pos = s; render(); }
+function setAd(on){ document.body.classList.toggle('ad', on); }
 async function load(i, start){
-  save(true); stopCountdown();
-  idx = i; pos = 0; dur = 0; seekTo = start || 0;
+  save(true); stopCountdown(); setAd(false);
+  idx = i; pos = 0; dur = 0; playing = false; seekTo = start || 0; render();
   $('eps').value = i; $('prev').disabled = i === 0; $('next').disabled = i >= job.episodes.length - 1;
   $('msg').textContent = 'Загрузка…'; $('frame').style.visibility = 'hidden';
   const r = await api().source(i);
   if (r.error) { $('msg').textContent = r.error; return; }
-  $('dub').textContent = (r.team || job.dub) + (r.fallback ? ' (выбранной озвучки нет — другая)' : '');
+  if (r.fallback) osd('Выбранной озвучки для этой серии нет — включена другая: ' + (r.team || ''));
   $('frame').src = r.src; $('frame').style.visibility = 'visible'; $('msg').textContent = '';
   api().current(i);
 }
 function stopCountdown(){ clearInterval(timer); timer = null; $('toast').style.display = 'none'; }
 function countdown(){
   if (idx >= job.episodes.length - 1 || timer) return;
-  count = 5; $('toast').style.display = 'flex'; $('go').textContent = 'Следующая серия через ' + count;
+  count = 10; $('toast').style.display = 'flex'; $('go').textContent = 'Следующая серия через ' + count;
   timer = setInterval(() => { count--; if (count <= 0) { load(idx + 1, 0); return; }
     $('go').textContent = 'Следующая серия через ' + count; }, 1000);
 }
 window.addEventListener('message', e => {
   const d = e.data || {};
-  if (d.key === 'kodik_player_duration_update') { dur = d.value;
-    if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => cmd({method:'seek', seconds:s}), 600); } }
-  else if (d.key === 'kodik_player_time_update') { pos = d.value; save(false);
+  if (d.key === 'kodik_player_duration_update') { dur = d.value; render();
+    if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({method:'seek', seconds:s}); osd('Продолжаем с ' + fmt(s)); }, 600); } }
+  else if (d.key === 'kodik_player_time_update') { pos = d.value; playing = true; setAd(false); render(); save(false);
     if (dur > 300 && dur - pos < 40) countdown(); }
-  else if (d.key === 'kodik_player_video_ended') { pos = dur; save(true); countdown(); }
-  else if (d.key === 'kodik_player_pause') save(true);
+  else if (d.key === 'kodik_player_play') { playing = true; render(); }
+  else if (d.key === 'kodik_player_pause') { playing = false; render(); save(true); }
+  else if (d.key === 'kodik_player_video_ended') { pos = dur; playing = false; render(); save(true); countdown(); }
+  else if (d.event === 'adShown' || d.title === 'vastStarted' || d.key === 'kodik_player_advert_started') setAd(true);
+  else if (d.key === 'kodik_player_advert_ended' || d.title === 'currentVastEnded') setAd(false);
 });
+// --- перемотка по своей полосе
+const bar = $('seek');
+const frac = x => { const r = bar.getBoundingClientRect(); return Math.min(1, Math.max(0, (x - r.left) / r.width)); };
+bar.addEventListener('pointerdown', e => { if (!dur) return; dragging = true; bar.setPointerCapture(e.pointerId); move(e); });
+bar.addEventListener('pointermove', e => { const f = frac(e.clientX), t = $('tip');
+  t.textContent = fmt(f * dur); t.style.left = f*100 + '%'; t.style.display = dur ? 'block' : 'none'; if (dragging) move(e); });
+bar.addEventListener('pointerleave', () => $('tip').style.display = 'none');
+bar.addEventListener('pointerup', e => { if (!dragging) return; dragging = false; seek(frac(e.clientX) * dur); });
+function move(e){ const f = frac(e.clientX); bar.querySelector('.pl').style.width = f*100+'%'; bar.querySelector('.kn').style.left = f*100+'%';
+  $('time').textContent = `${fmt(f*dur)} / ${fmt(dur)}`; }
+// --- кнопки
 $('frame').onload = () => { if ($('frame').src) setTimeout(() => cmd({method:'play'}), 1500); };
+const toggle = () => { cmd({method: playing ? 'pause' : 'play'}); playing = !playing; render(); };
+$('play').onclick = toggle;
+$('rw').onclick = () => { seek(pos - 10); osd('−10 с'); };
+$('ff').onclick = () => { seek(pos + 10); osd('+10 с'); };
 $('prev').onclick = () => load(idx - 1, null);
 $('next').onclick = () => load(idx + 1, null);
 $('go').onclick = () => load(idx + 1, null);
 $('stay').onclick = () => { clearInterval(timer); timer = null; $('toast').style.display = 'none'; };
 $('eps').onchange = () => load(+$('eps').value, null);
-$('skip').onclick = () => cmd({method:'seek', seconds: Math.floor(pos + 85)});
+$('skip').onclick = () => { seek(pos + 85); osd('Заставка пропущена'); };
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  const k = e.key.toLowerCase();
+  if (k === ' ' || k === 'k') { toggle(); e.preventDefault(); }
+  else if (k === 'arrowleft') { seek(pos - (e.shiftKey ? 30 : 10)); osd(e.shiftKey ? '−30 с' : '−10 с'); }
+  else if (k === 'arrowright') { seek(pos + (e.shiftKey ? 30 : 10)); osd(e.shiftKey ? '+30 с' : '+10 с'); }
+  else if (k === 'n') load(idx + 1, null);
+  else if (k === 'p' && idx > 0) load(idx - 1, null);
+  else if (k === 's') { seek(pos + 85); osd('Заставка пропущена'); }
+});
 window.addEventListener('beforeunload', () => save(true));
 window.addEventListener('pywebviewready', async () => {
   job = await api().job_data();
-  $('title').textContent = job.title; $('dub').textContent = job.dub; document.title = job.title;
+  document.title = job.title;
   job.episodes.forEach((ep, i) => { const o = document.createElement('option'); o.value = i;
     o.textContent = ep.key + ' серия' + (ep.name ? ' — ' + ep.name : ''); $('eps').appendChild(o); });
   load(job.index, job.position / 1000);
@@ -146,7 +215,12 @@ def run(job_path):
     os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--autoplay-policy=no-user-gesture-required")
     bridge = Bridge(job)
     # Окно без рамки и скрытое: основное приложение встраивает его в себя по HWND.
-    window = webview.create_window(job["title"], html=PAGE, js_api=bridge, frameless=True, hidden=True,
+    # Шрифт иконок встраиваем в страницу: она загружается из строки и не видит файлы на диске.
+    import base64
+    font_path = os.path.join(os.path.dirname(__file__), "assets", "fonts", "fa-solid-900.ttf")
+    with open(font_path, "rb") as f:
+        page = PAGE.replace("%%FONT%%", base64.b64encode(f.read()).decode("ascii"))
+    window = webview.create_window(job["title"], html=page, js_api=bridge, frameless=True, hidden=True,
                                    width=1280, height=780, background_color="#000000")
 
     def announce():

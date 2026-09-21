@@ -1,6 +1,6 @@
 {
   "name": "animeapp-mobile",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "description": "AnimeApp для Android-планшетов (Huawei HarmonyOS 4 / EMUI и любые Android 7+)",
   "scripts": {

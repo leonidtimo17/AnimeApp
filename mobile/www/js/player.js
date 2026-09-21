@@ -406,29 +406,53 @@ function nativePlayer(root, opts) {
 function kodikPlayer(root, opts) {
   const { rel, eps } = opts;
   let [idx, startPos] = startIndex(opts);
-  let pos = 0, dur = 0, lastSave = 0, seekTo = 0, countTimer = null;
+  let pos = 0, dur = 0, lastSave = 0, seekTo = 0, countTimer = null, playing = false, dragging = false, osdTimer;
   const team = opts.dub.id.split(":")[1];
+  // Своя панель под видео: поверх iframe Kodik ставить нельзя — он забирает касания себе.
   root.innerHTML = `
     <div class="pl-top solid">
       <button class="pl-btn" data-a="back">${fa("back")}</button>
       <div class="ttl"><b>${esc(src.title(rel))}</b><small class="sub"></small></div>
-      <button class="pl-btn" data-a="prev">${fa("prev")}</button>
-      <button class="pl-btn txt" data-a="eps"></button>
-      <button class="pl-btn" data-a="next">${fa("next")}</button>
-      <button class="pl-btn" data-a="skip85">+85 с</button>
       <button class="pl-btn" data-a="seasons" ${opts.seasons?.length ? "" : "hidden"}>${fa("layers")}</button>
-      <button class="pl-btn txt" data-a="dub">${fa("mic")}</button>
+      <button class="pl-btn txt" data-a="dub">${fa("mic")} ${esc(opts.dub.name)}</button>
     </div>
-    <iframe allow="autoplay; fullscreen" allowfullscreen></iframe>
+    <iframe class="kodik" allow="autoplay; fullscreen" allowfullscreen></iframe>
     <div class="spinner"></div>
-    <div class="pl-pill"></div>`;
+    <div class="pl-osd" hidden></div>
+    <div class="pl-pill kpill"></div>
+    <div class="kpanel">
+      <div class="seek"><div class="tr"></div><div class="pl"></div><div class="kn"></div></div>
+      <div class="pl-row">
+        <button class="pl-btn" data-a="prev">${fa("prev")}</button>
+        <button class="pl-btn ctl" data-a="rw">${fa("rewind")}</button>
+        <button class="pl-btn ctl" data-a="play">${fa("play")}</button>
+        <button class="pl-btn ctl" data-a="ff">${fa("forward")}</button>
+        <button class="pl-btn" data-a="next">${fa("next")}</button>
+        <span class="pl-time">0:00 / 0:00</span>
+        <button class="pl-btn txt" data-a="eps"></button>
+        <span class="sp"></span>
+        <span class="kad">Идёт реклама Kodik…</span>
+        <button class="pl-btn txt ctl kskip" data-a="skip85">${fa("fwd")} Пропустить заставку</button>
+      </div>
+    </div>`;
   const $ = (s) => root.querySelector(s);
   const frame = $("iframe");
   const m = menus(opts, () => [eps[idx].key, pos]);
-  // Касания внутри видео Kodik забирает себе, поэтому свайп вниз — по верхней панели.
-  swipeToClose(root, $(".pl-top"));
+  swipeToClose(root, $(".pl-top")); // свайп вниз по верхней панели — закрыть
   const cmd = (v) => frame.contentWindow?.postMessage({ key: "kodik_player_api", value: v }, "*");
+  const osd = (t) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), 1000); };
+  const setAd = (on) => root.classList.toggle("k-ad", on);
 
+  function render() {
+    $(".pl-time").textContent = `${fmtTime(pos)} / ${fmtTime(dur)}`;
+    if (!dragging && dur) {
+      const f = Math.min(1, pos / dur);
+      $(".kpanel .pl").style.width = `${f * 100}%`;
+      $(".kpanel .kn").style.left = `${f * 100}%`;
+    }
+    $("[data-a=play]").innerHTML = playing ? fa("pause") : fa("play");
+  }
+  function seek(s) { s = Math.max(0, Math.min(dur ? dur - 1 : s, s)); cmd({ method: "seek", seconds: Math.floor(s) }); pos = s; render(); }
   function save(force) {
     const e = eps[idx];
     if (dur > 0 && pos > 5 && (force || Date.now() - lastSave > 5000)) {
@@ -438,9 +462,11 @@ function kodikPlayer(root, opts) {
   }
   async function load(i, start) {
     save(true);
-    clearInterval(countTimer);
+    clearInterval(countTimer); countTimer = null;
     $(".pl-pill").innerHTML = "";
-    idx = i; pos = 0; dur = 0; seekTo = start || 0;
+    setAd(false);
+    idx = i; pos = 0; dur = 0; playing = false; seekTo = start || 0;
+    render();
     const e = eps[i];
     $("[data-a=eps]").textContent = `${src.fmtOrd(e.ordinal)} серия`;
     $("[data-a=prev]").disabled = i === 0;
@@ -457,9 +483,9 @@ function kodikPlayer(root, opts) {
   }
   function countdown() {
     if (idx >= eps.length - 1 || countTimer) return;
-    let n = 5;
+    let n = 10;
     const box = $(".pl-pill");
-    box.innerHTML = `<button data-a="stay">Остаться</button><button class="acc" data-a="next">Следующая серия через ${n}</button>`;
+    box.innerHTML = `<button data-a="stay">Смотреть титры</button><button class="acc" data-a="next">Следующая серия через ${n}</button>`;
     countTimer = setInterval(() => {
       n--;
       if (n <= 0) { clearInterval(countTimer); countTimer = null; load(idx + 1, 0); }
@@ -470,22 +496,44 @@ function kodikPlayer(root, opts) {
   const onMsg = (ev) => {
     const d = ev.data || {};
     if (d.key === "kodik_player_duration_update") {
-      dur = d.value;
-      if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => cmd({ method: "seek", seconds: s }), 600); }
-    } else if (d.key === "kodik_player_time_update") { pos = d.value; save(false); if (dur > 300 && dur - pos < 40) countdown(); }
-    else if (d.key === "kodik_player_video_ended") { pos = dur; save(true); countdown(); }
-    else if (d.key === "kodik_player_pause") save(true);
+      dur = d.value; render();
+      if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({ method: "seek", seconds: s }); osd(`Продолжаем с ${fmtTime(s)}`); }, 600); }
+    } else if (d.key === "kodik_player_time_update") {
+      pos = d.value; playing = true; setAd(false); render(); save(false);
+      if (dur > 300 && dur - pos < 40) countdown();
+    } else if (d.key === "kodik_player_play") { playing = true; render(); }
+    else if (d.key === "kodik_player_pause") { playing = false; render(); save(true); }
+    else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); countdown(); }
+    else if (d.event === "adShown" || d.title === "vastStarted" || d.key === "kodik_player_advert_started") setAd(true);
+    else if (d.key === "kodik_player_advert_ended" || d.title === "currentVastEnded") setAd(false);
   };
   window.addEventListener("message", onMsg);
+
+  // --- своя полоса перемотки
+  const bar = $(".kpanel .seek");
+  const frac = (x) => { const r = bar.getBoundingClientRect(); return Math.min(1, Math.max(0, (x - r.left) / r.width)); };
+  const moveTo = (x) => {
+    const f = frac(x);
+    $(".kpanel .pl").style.width = `${f * 100}%`;
+    $(".kpanel .kn").style.left = `${f * 100}%`;
+    $(".pl-time").textContent = `${fmtTime(f * dur)} / ${fmtTime(dur)}`;
+  };
+  bar.addEventListener("pointerdown", (e) => { if (!dur) return; dragging = true; bar.setPointerCapture(e.pointerId); moveTo(e.clientX); });
+  bar.addEventListener("pointermove", (e) => dragging && moveTo(e.clientX));
+  bar.addEventListener("pointerup", (e) => { if (!dragging) return; dragging = false; seek(frac(e.clientX) * dur); });
+
   root.onclick = (e) => {
     const b = e.target.closest("[data-a]");
     if (!b) return;
     const a = b.dataset.a;
     if (a === "back") close();
+    else if (a === "play") { cmd({ method: playing ? "pause" : "play" }); playing = !playing; render(); }
+    else if (a === "rw") { seek(pos - 10); osd("−10 с"); }
+    else if (a === "ff") { seek(pos + 10); osd("+10 с"); }
     else if (a === "prev") load(idx - 1, null);
-    else if (a === "next") { clearInterval(countTimer); countTimer = null; load(idx + 1, null); }
+    else if (a === "next") load(idx + 1, null);
     else if (a === "stay") { clearInterval(countTimer); countTimer = null; $(".pl-pill").innerHTML = ""; }
-    else if (a === "skip85") cmd({ method: "seek", seconds: Math.floor(pos + 85) });
+    else if (a === "skip85") { seek(pos + 85); osd("Заставка пропущена"); }
     else if (a === "eps") sheet([{ title: "Серии", items: eps.map((ep, i) => ({ label: `${src.fmtOrd(ep.ordinal)} серия${ep.name ? " — " + ep.name : ""}`,
       on: i === idx, hint: store.progress(rel.id)[ep.key]?.watched ? "✓" : "", action: () => load(i, null) })) }]);
     else if (a === "dub") m.dub();
