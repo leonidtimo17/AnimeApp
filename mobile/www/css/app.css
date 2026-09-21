@@ -120,6 +120,7 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 #player iframe { position: absolute; left: 0; right: 0; bottom: 0; top: calc(56px + var(--safe-top)); width: 100%;
   height: calc(100% - 56px - var(--safe-top)); border: 0; }
 .pl-top, .pl-bottom { position: absolute; left: 0; right: 0; padding: 12px 16px; transition: opacity .25s; }
+.pl-center { transition: opacity .25s; }
 .pl-top { top: 0; padding-top: calc(10px + var(--safe-top)); display: flex; align-items: center; gap: 12px;
   background: linear-gradient(rgba(0,0,0,.8), transparent); }
 .pl-top.solid { background: #0f0f12; }
@@ -127,7 +128,8 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 .pl-top .ttl b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl-top .ttl small { color: rgba(255,255,255,.7); }
 .pl-bottom { bottom: 0; padding-bottom: calc(10px + var(--safe-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.85)); }
-.pl-hidden .pl-top:not(.solid), .pl-hidden .pl-bottom { opacity: 0; pointer-events: none; }
+/* При просмотре прячем всё управление, кроме «Пропустить заставку» / «Следующая серия» */
+.pl-hidden .pl-top:not(.solid), .pl-hidden .pl-bottom, .pl-hidden .pl-center { opacity: 0; pointer-events: none; }
 .pl-btn { background: none; border: 0; color: #fff; font-size: 20px; padding: 10px 12px; border-radius: 10px; }
 .pl-btn.txt { font-size: 14px; font-weight: 700; }
 .pl-row { display: flex; align-items: center; gap: 2px; }

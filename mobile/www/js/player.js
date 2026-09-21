@@ -51,6 +51,7 @@ export function open(opts) {
   close.current?.(false);
   root.hidden = false;
   root.innerHTML = "";
+  root.style.transform = root.style.opacity = root.style.transition = "";
   const ctl = opts.dub.native ? nativePlayer(root, opts) : kodikPlayer(root, opts);
   close.current = (notify = true) => {
     ctl.destroy();
@@ -64,6 +65,48 @@ export function open(opts) {
   if (!entry.status || entry.status === "planned" || entry.status === "postponed") store.setStatus(opts.rel.id, "watching");
 }
 export function close() { if (close.current) { close.current(); return true; } return false; }
+
+/**
+ * Закрытие плеера свайпом сверху вниз (как в YouTube). handle — за что тянуть.
+ * Возвращает функцию, которая говорит, был ли только что свайп (чтобы не срабатывал тап).
+ */
+function swipeToClose(root, handle) {
+  let start = null, dy = 0, lastSwipe = 0;
+  const reset = (animate) => {
+    root.style.transition = animate ? "transform .2s, opacity .2s" : "";
+    root.style.transform = "";
+    root.style.opacity = "";
+  };
+  handle.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    start = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    dy = 0;
+    root.style.transition = "";
+  }, { passive: true });
+  handle.addEventListener("touchmove", (e) => {
+    if (!start) return;
+    const dx = e.touches[0].clientX - start.x;
+    dy = e.touches[0].clientY - start.y;
+    if (dy <= 10 || Math.abs(dx) > dy) { if (dy <= 0) root.style.transform = ""; return; }
+    root.style.transform = `translateY(${dy}px)`;
+    root.style.opacity = String(Math.max(0.35, 1 - dy / (root.clientHeight * 1.2)));
+  }, { passive: true });
+  handle.addEventListener("touchend", () => {
+    if (!start) return;
+    start = null;
+    if (dy > 12) lastSwipe = Date.now();
+    if (dy > Math.min(180, root.clientHeight * 0.25)) {
+      root.style.transition = "transform .2s, opacity .2s";
+      root.style.transform = "translateY(100%)";
+      root.style.opacity = "0";
+      setTimeout(() => { reset(false); close(); }, 200);
+    } else {
+      reset(true);
+    }
+  });
+  handle.addEventListener("touchcancel", () => { start = null; reset(true); });
+  return () => Date.now() - lastSwipe < 400;
+}
 export const isOpen = () => !!close.current;
 
 function startIndex(opts) {
@@ -134,6 +177,7 @@ function nativePlayer(root, opts) {
   const $ = (s) => root.querySelector(s);
   const video = $("video");
   const m = menus(opts, () => [eps[idx].key, video.currentTime]);
+  const wasSwipe = swipeToClose(root, video);  // тянуть видео вниз — закрыть плеер
 
   const ep = () => eps[idx];
   const effQ = () => {
@@ -292,6 +336,7 @@ function nativePlayer(root, opts) {
   // --- касания: тап — показать/скрыть панель, двойной тап слева/справа — ±10 с
   let lastTap = 0;
   video.addEventListener("click", (e) => {
+    if (wasSwipe()) return;
     const now = Date.now();
     if (now - lastTap < 300) {
       const right = e.clientX > root.clientWidth / 2;
@@ -380,6 +425,8 @@ function kodikPlayer(root, opts) {
   const $ = (s) => root.querySelector(s);
   const frame = $("iframe");
   const m = menus(opts, () => [eps[idx].key, pos]);
+  // Касания внутри видео Kodik забирает себе, поэтому свайп вниз — по верхней панели.
+  swipeToClose(root, $(".pl-top"));
   const cmd = (v) => frame.contentWindow?.postMessage({ key: "kodik_player_api", value: v }, "*");
 
   function save(force) {
