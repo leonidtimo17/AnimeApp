@@ -1,0 +1,21 @@
+# Окружение и сборка
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+installer/Output/
+*.spec
+# Android
+mobile/node_modules/
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/local.properties
+mobile/android/app/src/main/assets/public/
+*.keystore
+*.jks
+# Прочее
+*.log
+.DS_Store
+keystore.properties

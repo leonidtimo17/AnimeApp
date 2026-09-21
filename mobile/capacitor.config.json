@@ -1,0 +1,16 @@
+{
+  "appId": "com.animeapp.player",
+  "appName": "AnimeApp",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0f0f12"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": false }
+  }
+}

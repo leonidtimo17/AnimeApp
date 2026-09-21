@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0f0f12">
+  <title>AnimeApp</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <main id="view"></main>
+    <nav id="tabs">
+      <button data-tab="home"><i class="fa">&#xf015;</i><span>Главная</span></button>
+      <button data-tab="recs"><i class="fa">&#xe2ca;</i><span>Для вас</span></button>
+      <button data-tab="catalog"><i class="fa">&#xf009;</i><span>Каталог</span></button>
+      <button data-tab="search"><i class="fa">&#xf002;</i><span>Поиск</span></button>
+      <button data-tab="library"><i class="fa">&#xf02e;</i><span>Моё</span></button>
+    </nav>
+  </div>
+  <div id="player" hidden></div>
+  <div id="sheet" hidden></div>
+  <div id="toast" hidden></div>
+  <script src="vendor/hls.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

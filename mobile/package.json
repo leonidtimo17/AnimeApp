@@ -1,0 +1,17 @@
+{
+  "name": "animeapp-mobile",
+  "version": "1.1.0",
+  "private": true,
+  "description": "AnimeApp для Android-планшетов (Huawei HarmonyOS 4 / EMUI и любые Android 7+)",
+  "scripts": {
+    "sync": "cap sync android",
+    "apk": "cap sync android && cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "hls.js": "^1.7.3"
+  }
+}
