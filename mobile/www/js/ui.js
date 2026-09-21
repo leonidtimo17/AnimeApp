@@ -82,6 +82,37 @@ export function fillCards(container, items, onOpen, empty = "") {
   for (const it of items) container.appendChild(card(it, { onOpen }));
 }
 
+/**
+ * Плитка серии с картинкой: кадр из серии, иначе затемнённый постер с крупным номером.
+ * opts: {preview, poster, key, name, watched, progress (0..1), current, missing, note}
+ */
+export function episodeTile(o) {
+  const img = o.preview || o.poster;
+  return `<div class="ep${o.missing ? " missing" : ""}${o.current ? " cur" : ""}" data-k="${esc(o.key)}">
+    <div class="thumb${o.preview ? "" : " fallback"}" style="${img ? `background-image:url('${esc(img)}')` : ""}">
+      ${o.preview ? `<span class="num">${esc(o.key)}</span>` : `<span class="big">${esc(o.key)}</span>`}
+      ${o.watched ? `<span class="ok">${fa("circleCheck")}</span>` : ""}
+      ${o.current && !o.watched ? `<span class="now">${fa("play")}</span>` : ""}
+      <div class="tbar"><i style="width:${Math.round((o.watched ? 1 : o.progress || 0) * 100)}%"></i></div>
+    </div>
+    <div class="ep-t">${esc(o.key)} серия</div>
+    <div class="nm">${esc(o.note || o.name || "")}</div>
+  </div>`;
+}
+
+/** Строка серии для списка в плеере (картинка слева). */
+export function episodeRow(o, i) {
+  const img = o.preview || o.poster;
+  return `<div class="it${o.current ? " on" : ""}" data-i="${i}">
+    <div class="thumb${o.preview ? "" : " fallback"}" style="${img ? `background-image:url('${esc(img)}')` : ""}">
+      ${o.preview ? "" : `<span class="big">${esc(o.key)}</span>`}
+      <div class="tbar"><i style="width:${Math.round((o.watched ? 1 : o.progress || 0) * 100)}%"></i></div>
+    </div>
+    <div class="txt"><b>${esc(o.key)} серия</b><small>${esc(o.name || "")}</small></div>
+    ${o.watched ? `<span class="ok">${fa("circleCheck")}</span>` : ""}
+  </div>`;
+}
+
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 export function fmtDate(d, time = true) {

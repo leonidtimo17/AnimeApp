@@ -1,7 +1,15 @@
 // Плеер: встроенный (HLS/mp4) с фишками как в Кинопоиске и экран плеера Kodik.
 import * as store from "./store.js";
 import * as src from "./sources.js";
-import { I, esc, fa, fmtTime, sheet, toast } from "./ui.js";
+import { I, episodeRow, esc, fa, fmtTime, sheet, toast } from "./ui.js";
+
+/** HTML списка серий для боковой панели плеера. */
+function episodeList(opts, idx) {
+  const prog = store.progress(opts.rel.id);
+  return `<div class="ttl">Серии · ${opts.eps.length}</div>` + opts.eps.map((e, i) => episodeRow({
+    key: src.fmtOrd(e.ordinal), name: e.name, preview: e.preview, poster: opts.poster, current: i === idx,
+    watched: !!prog[e.key]?.watched, progress: prog[e.key]?.dur ? prog[e.key].pos / prog[e.key].dur : 0 }, i)).join("");
+}
 
 let speedCache = { t: 0, mbps: null };
 
@@ -380,10 +388,8 @@ function nativePlayer(root, opts) {
   }
 
   function renderList() {
-    const prog = store.progress(rel.id);
-    $(".pl-list").innerHTML = eps.map((e, i) => `<div data-i="${i}" class="${i === idx ? "on" : ""}">
-      <span>${src.fmtOrd(e.ordinal)} серия${e.name ? " — " + esc(e.name) : ""}</span>
-      <span>${prog[e.key]?.watched ? `<i class="fa" style="color:var(--green)">${I.circleCheck}</i>` : ""}</span></div>`).join("");
+    $(".pl-list").innerHTML = episodeList(opts, idx);
+    $(".pl-list .on")?.scrollIntoView({ block: "center" });
   }
 
   function pill() {
@@ -482,7 +488,7 @@ function nativePlayer(root, opts) {
     else if (a === "next" || a === "gonext") go(idx + 1);
     else if (a === "skip") skipOpening();
     else if (a === "stay") { nextCancelled = true; clearInterval(countTimer); $(".pl-pill").innerHTML = ""; $(".pl-pill").dataset.mode = ""; }
-    else if (a === "list") { renderList(); $(".pl-list").hidden = !$(".pl-list").hidden; }
+    else if (a === "list") { $(".pl-list").hidden = !$(".pl-list").hidden; renderList(); }
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
     else if (a === "speed") sheet([{ title: "Скорость", items: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => ({
@@ -582,6 +588,7 @@ function kodikPlayer(root, opts) {
     <div class="spinner"></div>
     <div class="pl-osd" hidden></div>
     <div class="pl-pill kpill"></div>
+    <div class="pl-list kplist" hidden></div>
     <div class="kpanel">
       <div class="seek"><div class="tr"></div><div class="pl"></div><div class="kn"></div></div>
       <div class="pl-row">
@@ -705,11 +712,22 @@ function kodikPlayer(root, opts) {
     else if (a === "next") load(idx + 1, null);
     else if (a === "stay") { clearInterval(countTimer); countTimer = null; $(".pl-pill").innerHTML = ""; }
     else if (a === "skip85") { seek(pos + 85); osd("Заставка пропущена"); }
-    else if (a === "eps") sheet([{ title: "Серии", items: eps.map((ep, i) => ({ label: `${src.fmtOrd(ep.ordinal)} серия${ep.name ? " — " + ep.name : ""}`,
-      on: i === idx, hint: store.progress(rel.id)[ep.key]?.watched ? "✓" : "", action: () => load(i, null) })) }]);
+    else if (a === "eps") {
+      const list = $(".kplist");
+      list.innerHTML = episodeList(opts, idx);
+      list.hidden = !list.hidden;
+      if (!list.hidden) list.querySelector(".on")?.scrollIntoView({ block: "center" });
+    }
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
   };
+  $(".kplist").addEventListener("click", (ev) => {
+    const it = ev.target.closest("[data-i]");
+    if (!it) return;
+    ev.stopPropagation();
+    $(".kplist").hidden = true;
+    load(+it.dataset.i, null);
+  });
   load(idx, startPos);
   return { destroy() {
     save(true); clearInterval(countTimer); clearInterval(watchdog); window.removeEventListener("message", onMsg);

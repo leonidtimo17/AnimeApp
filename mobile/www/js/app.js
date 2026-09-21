@@ -5,7 +5,7 @@ import { qualityName } from "./player.js";
 import * as src from "./sources.js";
 import * as store from "./store.js";
 import * as taste from "./taste.js";
-import { I, card, closeSheet, esc, fa, fillCards, fmtDate, sheet, toast } from "./ui.js";
+import { I, card, closeSheet, episodeTile, esc, fa, fillCards, fmtDate, sheet, toast } from "./ui.js";
 
 const view = document.getElementById("view");
 const tabs = document.getElementById("tabs");
@@ -276,11 +276,11 @@ const VIEWS = {
             <button class="btn${e.favorite ? " on" : ""}" id="fav">${e.favorite ? fa("heart") + " В избранном" : fa("heart", "far") + " В избранное"}</button>
           </div></div></div>
       <p class="desc">${esc(rel.description || "")}</p>
-      <div id="seasons"></div>
       <div class="row-head"><h2 id="epT">Серии</h2><span class="sp"></span><span class="muted" id="qnote"></span>
         <button class="btn small" id="dub">${fa("mic")} Озвучка: ищем…</button></div>
       <div class="ranges" id="ranges"></div><div class="eps" id="eps"><p class="muted">Ищем серии во всех источниках…</p></div>
-      <div id="soon"></div>`;
+      <div id="soon"></div>
+      <div id="seasons"></div>`;
     const $ = (s) => view.querySelector(s);
     $("#status").onclick = () => sheet([{ title: "Список", items: [...Object.entries(store.STATUSES).map(([k, n]) => ({ label: n, on: e.status === k,
       action: () => { store.setStatus(id, k); VIEWS.details(id); } })), ...(e.status ? [{ label: "Убрать из списков", action: () => { store.setStatus(id, null); VIEWS.details(id); } }] : [])] }]);
@@ -305,7 +305,10 @@ const VIEWS = {
     const union = new Map();
     await Promise.all(dubs.filter((d, i, a) => a.findIndex((x) => (x.native ? x.id : "kodik") === (d.native ? d.id : "kodik")) === i)
       .map(async (d) => { for (const ep of await src.episodes(rel, d).catch(() => [])) {
-        const slot = union.get(ep.key) || { ep, groups: new Set() }; slot.groups.add(d.native ? d.id : "kodik"); union.set(ep.key, slot); } }));
+        const slot = union.get(ep.key) || { ep, groups: new Set(), preview: null };
+        slot.groups.add(d.native ? d.id : "kodik");
+        slot.preview = slot.preview || ep.preview || null;
+        union.set(ep.key, slot); } }));
     if (current?.arg !== id) return;
     let range = null;
     async function renderEps() {
@@ -326,9 +329,9 @@ const VIEWS = {
         const missing = !ownKeys.has(x.key);
         const p = prog[x.key];
         const note = missing ? "есть в: " + [...(union.get(x.key)?.groups || [])].map((g) => names[g] || g).join(", ") : (x.name || "");
-        return `<div class="ep${missing ? " missing" : ""}${last?.key === x.key ? " cur" : ""}" data-k="${esc(x.key)}">
-          <div class="n"><span>${x.key} серия</span>${p?.watched ? `<i class="fa" style="color:var(--green)">${I.circleCheck}</i>` : ""}</div>
-          <div class="nm">${esc(note)}</div><div class="bar"><i style="width:${p?.watched ? 100 : p?.dur ? Math.round((p.pos / p.dur) * 100) : 0}%"></i></div></div>`;
+        return episodeTile({ key: x.key, name: x.name, note, missing, current: last?.key === x.key,
+          preview: x.preview || union.get(x.key)?.preview, poster,
+          watched: !!p?.watched, progress: p?.dur ? p.pos / p.dur : 0 });
       }).join("") || $("#eps").innerHTML;
       $("#play").innerHTML = `${fa("play")} ${last ? "Продолжить" : "Смотреть"}`;
     }
@@ -376,11 +379,13 @@ async function play(id, key = "", rel = null, dub = null, position = null) {
     dub = dub || src.chooseDub(rel, dubs, store);
     if (!dub) return toast("Серии не нашлись ни в одном источнике");
     store.setSetting(`dub:${id}`, dub.id);
-    const eps = await src.episodes(rel, dub);
+    let eps = await src.episodes(rel, dub);
     if (!eps.length) return toast("В этой озвучке пока нет серий");
+    const pv = await src.previews(rel, dubs).catch(() => ({}));
+    eps = eps.map((e) => ({ ...e, preview: e.preview || pv[e.key] || null }));
     const seasons = await src.franchise(rel).catch(() => []);
     player.open({
-      rel, dub, dubs, eps, seasons, key: eps.some((e) => e.key === key) ? key : "", position,
+      rel, dub, dubs, eps, seasons, poster: api.posterUrl(rel), key: eps.some((e) => e.key === key) ? key : "", position,
       onDub: (d, k, pos) => { store.setSetting("preferredDub", d.name); play(id, k, rel, d, pos > 5 ? pos : null); },
       onSeason: (entry) => play(entry.releaseId, ""),
       onClose: () => { if (current) show(current.name, current.arg, false); },

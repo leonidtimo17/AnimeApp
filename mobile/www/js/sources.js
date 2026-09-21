@@ -60,8 +60,10 @@ export function anilibriaEpisodes(rel) {
     for (const q of ["1080", "720", "480"]) if (e[`hls_${q}`]) streams[q] = e[`hls_${q}`];
     if (!Object.keys(streams).length) continue;
     const o = ordinal(e.ordinal, eps.length + 1);
+    const pv = e.preview || {};
     eps.push({ key: fmtOrd(o), ordinal: o, name: e.name || e.name_english, duration: e.duration,
-      opening: e.opening, ending: e.ending, streams, animelib: null });
+      opening: e.opening, ending: e.ending, streams, animelib: null,
+      preview: api.mediaUrl(pv.optimized?.preview || pv.preview || pv.src) });
   }
   return eps;
 }
@@ -184,7 +186,7 @@ async function vostEpisodes(id) {
     if (it.std) streams["480"] = it.std;
     if (!Object.keys(streams).length) return;
     const o = ordinal(it.name, i + 1);
-    eps.push({ key: fmtOrd(o), ordinal: o, name: null, streams, animelib: null });
+    eps.push({ key: fmtOrd(o), ordinal: o, name: null, streams, animelib: null, preview: it.preview || null });
   });
   return eps.sort((a, b) => a.ordinal - b.ordinal);
 }
@@ -234,6 +236,15 @@ export async function findDubs(rel) {
   const res = { t: Date.now(), dubs, matches };
   dubCache[rel.id] = res;
   return res;
+}
+
+/** Картинки серий со всех «родных» источников: номер серии -> URL (у Kodik картинок нет). */
+export async function previews(rel, dubs) {
+  const map = {};
+  for (const d of dubs.filter((x) => x.native)) {
+    for (const e of await episodes(rel, d).catch(() => [])) if (e.preview && !map[e.key]) map[e.key] = e.preview;
+  }
+  return map;
 }
 
 export function invalidate(id) {
