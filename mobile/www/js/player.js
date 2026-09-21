@@ -226,8 +226,15 @@ function nativePlayer(root, opts) {
     $(".spinner").hidden = false;
     const startAt = pos > 3 ? pos : 0;
     if (url.split("?")[0].endsWith(".m3u8") && window.Hls?.isSupported()) {
-      hls = new Hls({ maxBufferLength: 40, startPosition: startAt });
-      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) fallback(video.currentTime || startAt); });
+      hls = new Hls({ maxBufferLength: 40, startPosition: startAt, manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000 });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal) return;
+        // Обрыв сети — переподключаемся к тому же качеству, а не понижаем его
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) recover();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+        else fallback(video.currentTime || startAt);
+      });
       hls.loadSource(url);
       hls.attachMedia(video);
     } else {
@@ -245,7 +252,37 @@ function nativePlayer(root, opts) {
     if (next && next !== q) { osd(`Нет ${q}p, переключаемся на ${next}p`); setSource(pos); }
     else { $(".spinner").hidden = true; osd("Не удалось воспроизвести серию", 4000); }
   }
-  video.addEventListener("error", () => fallback(video.currentTime));
+  video.addEventListener("error", () => {
+    // MEDIA_ERR_NETWORK посреди просмотра — это обрыв связи, а не отсутствие качества
+    if (video.error?.code === 2 && video.currentTime > 3) recover();
+    else if (!hls) fallback(video.currentTime);
+  });
+
+  // --- восстановление после обрыва сети (смена Wi-Fi/VPN)
+  let lastTime = -1, frozenSince = 0, tries = 0, recovering = false;
+  function recover() {
+    if (recovering) return;
+    recovering = true;
+    setTimeout(() => (recovering = false), 3000);
+    tries++;
+    frozenSince = 0;
+    const pos = video.currentTime || startPos;
+    osd(tries > 3 ? "Нет соединения — пробуем снова… Проверьте интернет или VPN" : "Связь прервалась — переподключаемся…", 2500);
+    if (tries >= 2 && opts.onStale) { opts.onStale(ep().key, pos); return; }  // свежие ссылки
+    setSource(pos);
+  }
+  const watchdog = setInterval(() => {
+    if (video.paused || video.ended || !video.src && !hls) { frozenSince = 0; return; }
+    if (video.currentTime !== lastTime) {
+      if (video.currentTime > lastTime && lastTime >= 0) tries = 0;
+      lastTime = video.currentTime; frozenSince = 0; return;
+    }
+    if (!frozenSince) frozenSince = Date.now();
+    else if (Date.now() - frozenSince > 12000) recover();
+  }, 2000);
+  const onNet = () => { speedCache = { t: 0, mbps: null }; if (!video.paused) frozenSince = Date.now() - 9000; };
+  window.addEventListener("online", onNet);
+  navigator.connection?.addEventListener?.("change", onNet);
 
   function renderMarks() {
     const e = ep();
@@ -398,7 +435,11 @@ function nativePlayer(root, opts) {
   load(startPos);
   poke();
   return {
-    destroy() { save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load(); },
+    destroy() {
+      save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog);
+      window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
+      if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load();
+    },
   };
 }
 
@@ -407,6 +448,7 @@ function kodikPlayer(root, opts) {
   const { rel, eps } = opts;
   let [idx, startPos] = startIndex(opts);
   let pos = 0, dur = 0, lastSave = 0, seekTo = 0, countTimer = null, playing = false, dragging = false, osdTimer;
+  let lastTick = Date.now(), userPaused = false, started = false;
   const team = opts.dub.id.split(":")[1];
   // Своя панель под видео: поверх iframe Kodik ставить нельзя — он забирает касания себе.
   root.innerHTML = `
@@ -465,7 +507,7 @@ function kodikPlayer(root, opts) {
     clearInterval(countTimer); countTimer = null;
     $(".pl-pill").innerHTML = "";
     setAd(false);
-    idx = i; pos = 0; dur = 0; playing = false; seekTo = start || 0;
+    idx = i; pos = 0; dur = 0; playing = false; started = false; lastTick = Date.now(); seekTo = start || 0;
     render();
     const e = eps[i];
     $("[data-a=eps]").textContent = `${src.fmtOrd(e.ordinal)} серия`;
@@ -499,15 +541,24 @@ function kodikPlayer(root, opts) {
       dur = d.value; render();
       if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({ method: "seek", seconds: s }); osd(`Продолжаем с ${fmtTime(s)}`); }, 600); }
     } else if (d.key === "kodik_player_time_update") {
-      pos = d.value; playing = true; setAd(false); render(); save(false);
+      pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
       if (dur > 300 && dur - pos < 40) countdown();
-    } else if (d.key === "kodik_player_play") { playing = true; render(); }
-    else if (d.key === "kodik_player_pause") { playing = false; render(); save(true); }
+    } else if (d.key === "kodik_player_play") { playing = true; userPaused = false; lastTick = Date.now(); render(); }
+    else if (d.key === "kodik_player_pause") { playing = false; userPaused = true; render(); save(true); }
     else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); countdown(); }
     else if (d.event === "adShown" || d.title === "vastStarted" || d.key === "kodik_player_advert_started") setAd(true);
     else if (d.key === "kodik_player_advert_ended" || d.title === "currentVastEnded") setAd(false);
   };
   window.addEventListener("message", onMsg);
+
+  // --- восстановление после обрыва сети: видео должно идти, а время не обновляется — перезагружаем с того же места
+  const watchdog = setInterval(() => {
+    if (!started || userPaused || !dur || root.classList.contains("k-ad")) return;
+    if (Date.now() - lastTick > 15000) { lastTick = Date.now(); osd("Связь прервалась — переподключаемся…"); load(idx, pos); }
+  }, 3000);
+  const onNet = () => { if (started && !userPaused) lastTick = 0; };
+  window.addEventListener("online", onNet);
+  navigator.connection?.addEventListener?.("change", onNet);
 
   // --- своя полоса перемотки
   const bar = $(".kpanel .seek");
@@ -540,5 +591,9 @@ function kodikPlayer(root, opts) {
     else if (a === "seasons") m.seasons();
   };
   load(idx, startPos);
-  return { destroy() { save(true); clearInterval(countTimer); window.removeEventListener("message", onMsg); frame.src = "about:blank"; } };
+  return { destroy() {
+    save(true); clearInterval(countTimer); clearInterval(watchdog); window.removeEventListener("message", onMsg);
+    window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
+    frame.src = "about:blank";
+  } };
 }

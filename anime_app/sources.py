@@ -417,9 +417,19 @@ class Sources(QObject):
     def _sorted(dubs):
         return sorted(dubs, key=lambda d: (not d["native"], d["kind"] == "sub", d["name"].lower()))
 
+    def invalidate(self, release_id):
+        """Забыть найденные озвучки и серии тайтла (после смены сети ссылки могли устареть)."""
+        self._dubs.pop(release_id, None)
+        for k in [k for k in self._episodes if k[0] == release_id]:
+            self._episodes.pop(k, None)
+
     def episodes(self, release, dub, on_ok, on_err=None):
         rid = release["id"]
         key = (rid, dub["id"])
+        if dub["id"] == "anilibria":
+            # Серии AniLibria — всегда из переданного (свежего) релиза: в них ссылки на поток
+            on_ok(anilibria_episodes(release))
+            return
         if key in self._episodes:
             on_ok(self._episodes[key])
             return

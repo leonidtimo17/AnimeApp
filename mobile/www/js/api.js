@@ -146,7 +146,8 @@ export const catalog = (f = {}) => al("/anime/catalog/releases", {
 }, 600);
 
 export const latest = () => al("/anime/releases/latest", { limit: 24 }, 300);
-export const release = (id) => al(`/anime/releases/${id}`, null, 120);
+// fresh — без кэша: ссылки на видео AniLibria привязаны к сети (VPN/страна) и после её смены не работают
+export const release = (id, fresh = false) => al(`/anime/releases/${id}`, null, fresh ? 0 : 120);
 export const schedule = () => al("/anime/schedule/week", null, 900);
 export const genres = () => al("/anime/catalog/references/genres", null, 86400);
 export const years = () => al("/anime/catalog/references/years", null, 86400);

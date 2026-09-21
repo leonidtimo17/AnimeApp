@@ -135,7 +135,7 @@ function seek(s){ s = Math.max(0, Math.min(dur ? dur - 1 : s, s)); cmd({method:'
 function setAd(on){ document.body.classList.toggle('ad', on); }
 async function load(i, start){
   save(true); stopCountdown(); setAd(false);
-  idx = i; pos = 0; dur = 0; playing = false; seekTo = start || 0; render();
+  idx = i; pos = 0; dur = 0; playing = false; started = false; lastTick = Date.now(); seekTo = start || 0; render();
   $('eps').value = i; $('prev').disabled = i === 0; $('next').disabled = i >= job.episodes.length - 1;
   $('msg').textContent = 'Загрузка…'; $('frame').style.visibility = 'hidden';
   const r = await api().source(i);
@@ -155,10 +155,10 @@ window.addEventListener('message', e => {
   const d = e.data || {};
   if (d.key === 'kodik_player_duration_update') { dur = d.value; render();
     if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({method:'seek', seconds:s}); osd('Продолжаем с ' + fmt(s)); }, 600); } }
-  else if (d.key === 'kodik_player_time_update') { pos = d.value; playing = true; setAd(false); render(); save(false);
+  else if (d.key === 'kodik_player_time_update') { pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
     if (dur > 300 && dur - pos < 40) countdown(); }
-  else if (d.key === 'kodik_player_play') { playing = true; render(); }
-  else if (d.key === 'kodik_player_pause') { playing = false; render(); save(true); }
+  else if (d.key === 'kodik_player_play') { playing = true; userPaused = false; lastTick = Date.now(); render(); }
+  else if (d.key === 'kodik_player_pause') { playing = false; userPaused = true; render(); save(true); }
   else if (d.key === 'kodik_player_video_ended') { pos = dur; playing = false; render(); save(true); countdown(); }
   else if (d.event === 'adShown' || d.title === 'vastStarted' || d.key === 'kodik_player_advert_started') setAd(true);
   else if (d.key === 'kodik_player_advert_ended' || d.title === 'currentVastEnded') setAd(false);
@@ -195,6 +195,13 @@ document.addEventListener('keydown', e => {
   else if (k === 'p' && idx > 0) load(idx - 1, null);
   else if (k === 's') { seek(pos + 85); osd('Заставка пропущена'); }
 });
+// --- восстановление после обрыва сети (смена Wi-Fi/VPN): если видео должно идти, а время не обновляется — перезагружаем с того же места
+let lastTick = Date.now(), userPaused = false, started = false;
+setInterval(() => {
+  if (!started || userPaused || !dur || document.body.classList.contains('ad')) return;
+  if (Date.now() - lastTick > 15000) { lastTick = Date.now(); osd('Связь прервалась — переподключаемся…'); load(idx, pos); }
+}, 3000);
+window.addEventListener('online', () => { if (started && !userPaused) lastTick = 0; });
 window.addEventListener('beforeunload', () => save(true));
 window.addEventListener('pywebviewready', async () => {
   job = await api().job_data();

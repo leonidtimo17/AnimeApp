@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
             else:
                 stop(f"Не удалось загрузить тайтл: {msg}")
 
-        self.ctx.load_release(release_id, ok, fail)
+        self.ctx.load_release(release_id, ok, fail, fresh=True)
 
     def _launch(self, release, dub, eps, key, position=None):
         if key and not any(e["key"] == key for e in eps):
@@ -235,6 +235,7 @@ class MainWindow(QMainWindow):
         self._now = (release, dub)
         if dub["native"]:
             self.kodik.stop()
+            self.player.current_dub = dub
             self.player.open(release, eps, dub["name"], key, position=position)
             target = self.player
             if not self.player.pip:

@@ -21,7 +21,7 @@ class AppContext(QObject):
             api.cache = db
             db.http_prune()
 
-    def load_release(self, release_id, on_ok, on_err=None):
+    def load_release(self, release_id, on_ok, on_err=None, fresh=False):
         """Карточка тайтла: AniLibria или AnimeLib (для тайтлов, которых нет на AniLibria)."""
         from .sources import is_animelib_id, is_shiki_id
         if is_shiki_id(release_id):
@@ -29,7 +29,7 @@ class AppContext(QObject):
         elif is_animelib_id(release_id):
             self.sources.animelib_release(release_id, on_ok, on_err)
         else:
-            self.api.release(release_id, on_ok, on_err)
+            self.api.release(release_id, on_ok, on_err, fresh=fresh)
 
     def remember(self, release: dict, full=False):
         self.db.cache_anime(release, self.api.poster_url(release), release_subtitle(release), full=full)

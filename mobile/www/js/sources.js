@@ -101,7 +101,7 @@ export async function shikiRelease(id) {
 
 export const shikiInfo = (sid) => api.request(`${SHIKI}/api/animes/${sid}`, { ttl: 3600 }).catch(() => null);
 
-export async function loadRelease(id) {
+export async function loadRelease(id, fresh = false) {
   if (isShiki(id)) return shikiRelease(id);
   if (isAnimeLib(id)) {
     const slug = animelibSlugs[id];
@@ -110,7 +110,7 @@ export async function loadRelease(id) {
       headers: ANIMELIB_H, ttl: 3600 })).data;
     return animelibRelease(d);
   }
-  return api.release(id);
+  return api.release(id, fresh);
 }
 
 // ------------------------------------------------------------------ AnimeLib (Kodik)
@@ -236,8 +236,15 @@ export async function findDubs(rel) {
   return res;
 }
 
+export function invalidate(id) {
+  delete dubCache[id];
+  for (const k of Object.keys(epCache)) if (k.startsWith(`${id}|`)) delete epCache[k];
+}
+
 export async function episodes(rel, dub) {
   const key = `${rel.id}|${dub.id}`;
+  // Серии AniLibria — всегда из переданного (свежего) релиза: в них ссылки на поток
+  if (dub.id === "anilibria") return anilibriaEpisodes(rel);
   if (epCache[key]) return epCache[key];
   const { matches } = await findDubs(rel);
   let eps = [];

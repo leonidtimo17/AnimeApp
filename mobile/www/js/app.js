@@ -365,7 +365,9 @@ const VIEWS = {
 async function play(id, key = "", rel = null, dub = null, position = null) {
   toast("Загружаем серии…", 1500);
   try {
-    rel = rel || await src.loadRelease(id);
+    // Всегда свежие ссылки на поток (после смены сети/VPN старые не работают)
+    rel = await src.loadRelease(id, true).catch(() => rel);
+    if (!rel) throw new Error("нет соединения");
     const { dubs } = await src.findDubs(rel);
     dub = dub || src.chooseDub(rel, dubs, store);
     if (!dub) return toast("Серии не нашлись ни в одном источнике");
@@ -378,6 +380,8 @@ async function play(id, key = "", rel = null, dub = null, position = null) {
       onDub: (d, k, pos) => { store.setSetting("preferredDub", d.name); play(id, k, rel, d, pos > 5 ? pos : null); },
       onSeason: (entry) => play(entry.releaseId, ""),
       onClose: () => { if (current) show(current.name, current.arg, false); },
+      // Переподключение не помогло — получаем свежие ссылки и продолжаем с того же места
+      onStale: (k, pos) => { src.invalidate(id); play(id, k, null, dub, pos > 5 ? pos : null); },
     });
   } catch (e) { toast(`Не удалось открыть: ${e.message}`); }
 }

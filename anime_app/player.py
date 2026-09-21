@@ -7,6 +7,8 @@
 - список серий внутри плеера, полноэкранный режим и «картинка в картинке»;
 - горячие клавиши, автоскрытие интерфейса, всплывающие подсказки.
 """
+import time
+
 from PySide6.QtCore import QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -243,6 +245,7 @@ class PlayerWindow(QWidget):
         self.setMouseTracking(True)
 
         self.release = None
+        self.current_dub = None
         self._bad_q = set()
         self.dub_name = ""
         self.episodes = []
@@ -294,6 +297,16 @@ class PlayerWindow(QWidget):
         self.count_timer.timeout.connect(self._tick_countdown)
         self.click_timer = QTimer(self, singleShot=True, interval=230)
         self.click_timer.timeout.connect(self.toggle_play)
+
+        # Восстановление после обрыва сети (смена Wi-Fi, включение/выключение VPN):
+        # сторож проверяет, что видео действительно идёт, и переподключается, если оно зависло.
+        self._last_pos = -1
+        self._frozen_since = None
+        self._recover_tries = 0
+        self.watchdog = QTimer(self, interval=2000)
+        self.watchdog.timeout.connect(self._watch)
+        self.watchdog.start()
+        self._watch_network()
 
         self.view.viewport().installEventFilter(self)
         self._update_mute_icon()
@@ -610,7 +623,10 @@ class PlayerWindow(QWidget):
         self.quality_btn.setText(("Авто · " + label) if self.quality == "auto" else label)
         self._quality_menu()
         self.pending_seek = position if position and position > 3000 else None
-        self.player.setSource(QUrl(self.current_episode()["streams"][q]))
+        url = QUrl(self.current_episode()["streams"][q])
+        if self.player.source() == url:
+            self.player.setSource(QUrl())  # та же ссылка — Qt не перезагрузит поток без сброса
+        self.player.setSource(url)
         self.player.play()
         self.loading.show()
         self._layout_overlay()
@@ -840,7 +856,94 @@ class PlayerWindow(QWidget):
             self._show_controls()
             self.hide_timer.stop()
 
-    def _on_error(self, _err, text):
+    # ============================================================ сеть
+    def _watch_network(self):
+        """Подписка на смену сети (если Qt умеет её отслеживать в этой системе)."""
+        try:
+            from PySide6.QtNetwork import QNetworkInformation
+            if not QNetworkInformation.loadDefaultBackend():
+                return
+            info = QNetworkInformation.instance()
+            info.reachabilityChanged.connect(lambda *_: self._network_changed())
+            if hasattr(info, "transportMediumChanged"):
+                info.transportMediumChanged.connect(lambda *_: self._network_changed())
+        except Exception:  # noqa: BLE001 — без этого работает и сторож
+            pass
+
+    def _network_changed(self):
+        BandwidthProbe._last = (0.0, None)   # скорость в новой сети другая — замерим заново
+        if self._frozen_since is None and self.current_episode():
+            # Проверим поток побыстрее, чем через обычные 12 секунд
+            self._frozen_since = time.time() - 8
+
+    def _watch(self):
+        if not self.current_episode() or self._probing:
+            return
+        playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        pos = self.player.position()
+        if not playing or pos != self._last_pos:
+            if playing and pos > self._last_pos >= 0:
+                self._recover_tries = 0
+            self._last_pos = pos
+            self._frozen_since = None
+            return
+        if self._frozen_since is None:
+            self._frozen_since = time.time()
+        elif time.time() - self._frozen_since >= 12:
+            self._recover()
+
+    def _recover(self):
+        """Переподключиться к потоку с того же места; со второй попытки — со свежими ссылками."""
+        self._recover_tries += 1
+        self._frozen_since = None
+        pos = self.pending_seek or self.player.position()
+        self.ctx.api.reset_connections()
+        if self._recover_tries > 3:
+            self.show_osd("Нет соединения — пробуем снова… Проверьте интернет или VPN", 4000)
+        else:
+            self.show_osd("Связь прервалась — переподключаемся…", 2500)
+        if self._recover_tries >= 2:
+            self._refresh_streams(pos)
+        else:
+            self._load_source(pos)
+
+    def _refresh_streams(self, pos):
+        """Заново получить ссылки на серии (после смены сети/VPN старые могут не работать)."""
+        old, dub = self.release, self.current_dub
+        ep = self.current_episode()
+        if not old or not dub or not ep:
+            self._load_source(pos)
+            return
+        key = ep["key"]
+
+        def ok(fresh):
+            if self.release is not old:          # пользователь уже открыл другое
+                return
+            new = fresh if fresh.get("id") == old["id"] else old
+            self.release = new
+            self.ctx.sources.invalidate(new["id"])
+
+            def with_eps(eps):
+                eps = [e for e in eps if e.get("streams")]
+                if self.release is not new:
+                    return
+                if eps:
+                    self.episodes = eps
+                    self.index = next((i for i, e in enumerate(eps) if e["key"] == key), self.index)
+                    self._bad_q = set()
+                self._load_source(pos)
+
+            self.ctx.sources.episodes(new, dub, with_eps, lambda _e: self._load_source(pos))
+
+        self.ctx.load_release(old["id"], ok, lambda _e: self._load_source(pos), fresh=True)
+
+    def _on_error(self, err, text):
+        # Обрыв сети посреди просмотра — переподключаемся к тому же качеству, а не понижаем его.
+        E = QMediaPlayer.Error
+        playing_before = self.player.position() > 3000 or (self.pending_seek or 0) > 3000 or self._recover_tries > 0
+        if err == E.NetworkError or (err == E.ResourceError and playing_before):
+            QTimer.singleShot(2000, self._recover)
+            return
         q = self._effective_quality()
         order = [k for k, _ in QUALITIES]
         lower = [k for k in order[order.index(q) + 1:] if (self.current_episode() or {}).get("streams", {}).get(k)] if q else []

@@ -135,8 +135,13 @@ class Api(QObject):
     def latest(self, on_ok, on_err=None, limit=24):
         return self.get("/anime/releases/latest", {"limit": limit}, on_ok, on_err, cache_ttl=300)
 
-    def release(self, id_or_alias, on_ok, on_err=None):
-        return self.get(f"/anime/releases/{id_or_alias}", None, on_ok, on_err, cache_ttl=120)
+    def release(self, id_or_alias, on_ok, on_err=None, fresh=False):
+        # fresh=True — без кэша: ссылки на видео AniLibria привязаны к сети (VPN/страна), старые перестают работать
+        return self.get(f"/anime/releases/{id_or_alias}", None, on_ok, on_err, cache_ttl=0 if fresh else 120)
+
+    def reset_connections(self):
+        """После смены сети/VPN старые соединения «висят» — сбрасываем их."""
+        self.nam.clearConnectionCache()
 
     def catalog(self, on_ok, on_err=None, page=1, limit=30, search=None, genre=None,
                 types=None, year_from=None, year_to=None, sorting=None, genres=None,
