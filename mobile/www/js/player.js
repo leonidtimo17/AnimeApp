@@ -3,18 +3,25 @@ import * as store from "./store.js";
 import * as src from "./sources.js";
 import { I, esc, fa, fmtTime, sheet, toast } from "./ui.js";
 
-const QUALITIES = ["1080", "720", "480"];
 let speedCache = { t: 0, mbps: null };
 
+// Сколько Мбит/с нужно для качества (по высоте кадра)
+const requiredMbps = (q) => { const h = +q; return h >= 2000 ? 20 : h >= 1400 ? 12 : h >= 1000 ? 9 : h >= 700 ? 4 : 0; };
+export const qualityName = (h) => (h >= 2000 ? "4K" : h >= 1400 ? "2K" : h >= 1000 ? "Full HD" : h >= 700 ? "HD" : "SD");
+const sortQ = (qs) => [...qs].sort((a, b) => +b - +a);
+// Примерный битрейт для общего плейлиста (hls.js сам уточнит по факту загрузки)
+const bitrate = (q) => ({ 2160: 15e6, 1440: 9e6, 1080: 5e6, 720: 2.5e6, 480: 1.2e6 }[q] || Math.max(0.6e6, +q * 2500));
+
 function recommend(mbps, available) {
-  const want = mbps == null ? "720" : mbps >= 9 ? "1080" : mbps >= 4 ? "720" : "480";
-  const order = QUALITIES.slice(QUALITIES.indexOf(want)).concat(QUALITIES.slice(0, QUALITIES.indexOf(want)).reverse());
-  return order.find((q) => available.includes(q)) || available[0];
+  const avail = sortQ(available);
+  if (!avail.length) return null;
+  if (mbps == null) return avail.find((q) => +q <= 720) || avail.at(-1);
+  return avail.find((q) => requiredMbps(q) <= mbps) || avail.at(-1);
 }
 
 // Замер скорости по кусочку этого же видео (как у онлайн-кинотеатров)
-async function measure(url) {
-  if (speedCache.mbps != null && Date.now() - speedCache.t < 600_000) return speedCache.mbps;
+async function measure(url, force = false) {
+  if (!force && speedCache.mbps != null && Date.now() - speedCache.t < 600_000) return speedCache.mbps;
   try {
     let seg = url;
     for (let depth = 0; depth < 2 && seg.split("?")[0].endsWith(".m3u8"); depth++) {
@@ -180,13 +187,33 @@ function nativePlayer(root, opts) {
   const wasSwipe = swipeToClose(root, video);  // тянуть видео вниз — закрыть плеер
 
   const ep = () => eps[idx];
+  // Только качества, которые реально есть у серии, от лучшего к худшему
+  const qualities = () => sortQ(Object.keys(ep().streams).filter((q) => ep().streams[q]));
+  const realH = {};  // «озвучка|качество» -> настоящая высота кадра (подписи у источников бывают неточными)
+  const height = (q) => realH[`${opts.dub.id}|${q}`] || +q;
+  const qLabel = (q, short = false) => (short ? `${qualityName(height(q))} ${height(q)}p` : `${height(q)}p · ${qualityName(height(q))}`);
+  let autoCap = null, upVotes = 0, curQ = null;  // потолок «Авто» после подгрузок; текущее качество
   const effQ = () => {
-    const avail = QUALITIES.filter((q) => ep().streams[q] && !badQ.has(q));
-    const pref = quality === "auto" ? recommended : quality;
+    const avail = qualities().filter((q) => !badQ.has(q));
+    if (!avail.length) return null;
+    let pref = quality === "auto" ? recommended : quality;
+    if (quality === "auto" && autoCap && +pref > +autoCap) pref = autoCap;
     if (avail.includes(pref)) return pref;
-    // Нужного качества нет — ближайшее ниже, иначе любое доступное
-    return avail.find((q) => QUALITIES.indexOf(q) > QUALITIES.indexOf(pref)) || avail[0];
+    // Нужного нет — ближайшее ниже, иначе самое низкое
+    return avail.find((q) => +q < +pref) || avail.at(-1);
   };
+  const updateQualityUi = () => {
+    const q = curQ || effQ();
+    if (q) $("[data-a=quality]").textContent = (quality === "auto" ? "Авто · " : "") + qLabel(q, true);
+  };
+  // Настоящее разрешение — по первому кадру
+  video.addEventListener("resize", () => {
+    const q = curQ || effQ();
+    if (q && video.videoHeight && realH[`${opts.dub.id}|${q}`] !== video.videoHeight) {
+      realH[`${opts.dub.id}|${q}`] = video.videoHeight;
+      updateQualityUi();
+    }
+  });
   let osdTimer;
   const osd = (t, ms = 1200) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), ms); };
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); if (!video.paused) hideTimer = setTimeout(() => root.classList.add("pl-hidden"), 3000); };
@@ -205,29 +232,79 @@ function nativePlayer(root, opts) {
     $("[data-a=next]").disabled = idx >= eps.length - 1;
     openingSkipped = false; nextCancelled = false; badQ = new Set();
     clearInterval(countTimer); $(".pl-pill").innerHTML = "";
-    const avail = QUALITIES.filter((q) => e.streams[q]);
+    const avail = qualities();
     if (quality === "auto") {
       $(".spinner").hidden = false;
       if (speedCache.mbps == null) osd("Проверяем скорость интернета…", 4000);
       const mbps = await measure(e.streams["720"] || e.streams["480"] || Object.values(e.streams)[0]);
       if (ep() !== e) return;
       recommended = recommend(mbps, avail);
-      if (mbps) osd(`Интернет ~${Math.round(mbps)} Мбит/с → ${recommended}p (рекомендовано)`, 2500);
+      if (mbps) osd(`Интернет ~${Math.round(mbps)} Мбит/с → ${qLabel(recommended)} (рекомендовано)`, 2500);
     }
     setSource(pos);
     renderMarks();
   }
 
+  let masterUrl = null;
+  // Качество уровня hls.js: по нашему полю QUALITY, иначе — по ссылке на поток
+  const levelKey = (i) => {
+    const l = hls?.levels?.[i];
+    if (!l) return null;
+    const tag = String(l.attrs?.QUALITY || "").replace(/"/g, "");
+    if (tag) return tag;
+    const urls = [].concat(l.url || l.uri || []);
+    return qualities().find((q) => urls.includes(ep().streams[q])) || null;
+  };
+  const levelIndex = (q) => (hls?.levels || []).findIndex((_, i) => levelKey(i) === q);
+
+  function buildMaster() {
+    // Один «мастер-плейлист» из всех качеств серии: hls.js сам поднимает качество, когда сеть ускоряется,
+    // и опускает, когда замедляется — плавно, без перезагрузки видео.
+    const qs = qualities().filter((q) => !badQ.has(q));
+    const lines = ["#EXTM3U"];
+    for (const q of qs) {
+      const h = height(q);
+      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${Math.round(bitrate(q))},RESOLUTION=${Math.round(h * 16 / 9)}x${h},QUALITY="${q}"`);
+      lines.push(ep().streams[q]);
+    }
+    if (masterUrl) URL.revokeObjectURL(masterUrl);
+    masterUrl = URL.createObjectURL(new Blob([lines.join("\n")], { type: "application/vnd.apple.mpegurl" }));
+    return masterUrl;
+  }
+
   function setSource(pos) {
     const q = effQ();
+    if (!q) return;
     const url = ep().streams[q];
-    $("[data-a=quality]").textContent = (quality === "auto" ? "Авто · " : "") + ({ 1080: "FHD", 720: "HD", 480: "SD" }[q]);
+    curQ = q;
+    updateQualityUi();
     if (hls) { hls.destroy(); hls = null; }
     $(".spinner").hidden = false;
     const startAt = pos > 3 ? pos : 0;
+    const allHls = qualities().every((x) => ep().streams[x].split("?")[0].endsWith(".m3u8"));
     if (url.split("?")[0].endsWith(".m3u8") && window.Hls?.isSupported()) {
-      hls = new Hls({ maxBufferLength: 40, startPosition: startAt, manifestLoadingMaxRetry: 4,
-        levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000 });
+      // Запас не больше ~45 с: иначе новое качество (после ускорения сети) видно только через пару минут
+      hls = new Hls({ maxBufferLength: 40, maxMaxBufferLength: 45, startPosition: startAt, manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000,
+        capLevelToPlayerSize: false, abrEwmaDefaultEstimate: (speedCache.mbps || 3) * 1e6 });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        const i = levelIndex(q);
+        if (i < 0) return;
+        hls.startLevel = i;
+        // «Авто» — адаптивное качество hls.js; вручную — фиксированный уровень
+        if (quality === "auto") {
+          hls.currentLevel = -1;
+          if (autoCap) hls.autoLevelCapping = Math.max(levelIndex(autoCap), 0);
+        } else hls.currentLevel = i;
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
+        const k = levelKey(data.level);
+        if (!k || k === curQ) return;
+        const up = +k > +curQ;
+        curQ = k;
+        updateQualityUi();
+        if (quality === "auto") osd(up ? `Сеть стала быстрее — ${qLabel(k)}` : `Сеть медленнее — ${qLabel(k)}`, 2200);
+      });
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         // Обрыв сети — переподключаемся к тому же качеству, а не понижаем его
@@ -235,7 +312,8 @@ function nativePlayer(root, opts) {
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
         else fallback(video.currentTime || startAt);
       });
-      hls.loadSource(url);
+      root.__hls = hls;  // для диагностики (без глобальных переменных)
+      hls.loadSource(allHls && qualities().length > 1 ? buildMaster() : url);
       hls.attachMedia(video);
     } else {
       video.src = url;
@@ -249,7 +327,7 @@ function nativePlayer(root, opts) {
     const q = effQ();
     badQ.add(q);
     const next = effQ();
-    if (next && next !== q) { osd(`Нет ${q}p, переключаемся на ${next}p`); setSource(pos); }
+    if (next && next !== q) { osd(`Нет ${qLabel(q)}, переключаемся на ${qLabel(next)}`); setSource(pos); }
     else { $(".spinner").hidden = true; osd("Не удалось воспроизвести серию", 4000); }
   }
   video.addEventListener("error", () => {
@@ -280,7 +358,8 @@ function nativePlayer(root, opts) {
     if (!frozenSince) frozenSince = Date.now();
     else if (Date.now() - frozenSince > 12000) recover();
   }, 2000);
-  const onNet = () => { speedCache = { t: 0, mbps: null }; if (!video.paused) frozenSince = Date.now() - 9000; };
+  const onNet = () => { speedCache = { t: 0, mbps: null }; autoCap = null; upVotes = 0; if (hls) hls.autoLevelCapping = -1;
+    if (!video.paused) frozenSince = Date.now() - 9000; };
   window.addEventListener("online", onNet);
   navigator.connection?.addEventListener?.("change", onNet);
 
@@ -410,12 +489,12 @@ function nativePlayer(root, opts) {
       label: `${s}x${s === 1 ? " (обычная)" : ""}`, on: video.playbackRate === s,
       action: () => { video.playbackRate = s; b.textContent = `${s}x`; } })) }]);
     else if (a === "quality") {
-      const avail = QUALITIES.filter((q) => ep().streams[q]);
+      const now = quality === "auto" && curQ ? ` · сейчас ${height(curQ)}p` : "";
       sheet([{ title: "Качество", items: [
-        { label: `Авто — по скорости интернета${speedCache.mbps ? ` · ${Math.round(speedCache.mbps)} Мбит/с` : ""}`,
+        { label: `Авто — по скорости интернета${now}${speedCache.mbps ? ` · ${Math.round(speedCache.mbps)} Мбит/с` : ""}`,
           on: quality === "auto", action: () => setQuality("auto") },
-        ...avail.map((q) => ({ label: `${q}p${q === recommended ? "  · рекомендовано" : ""}`, on: quality === q,
-          action: () => setQuality(q) })),
+        ...qualities().map((q) => ({ label: `${qLabel(q)}${q === recommended ? "  · рекомендовано" : ""}`,
+          on: quality === q, action: () => setQuality(q) })),
       ] }, { title: "Настройки", items: [{ label: "Автопропуск заставки", on: store.setting("autoskip", false),
         action: () => store.setSetting("autoskip", !store.setting("autoskip", false)) }] }]);
     } else if (a === "fs") {
@@ -427,9 +506,49 @@ function nativePlayer(root, opts) {
   function setQuality(q) {
     quality = q;
     store.setSetting("qualityMode", q);
-    setSource(video.currentTime);
-    osd(q === "auto" ? "Авто" : `Качество ${q}p`);
+    const i = q === "auto" ? -1 : levelIndex(q);
+    if (hls && (q === "auto" || i >= 0) && hls.levels?.length > 1) {
+      // Общий плейлист уже загружен — переключаем уровень без перезагрузки видео
+      autoCap = null;
+      hls.autoLevelCapping = -1;
+      hls.currentLevel = i;
+      if (q !== "auto") { curQ = q; updateQualityUi(); }
+    } else {
+      setSource(video.currentTime);
+    }
+    osd(q === "auto" ? "Авто — по скорости интернета" : `Качество ${qLabel(q)}`);
   }
+
+  // --- mp4 (AnimeVost): у файла нет общего плейлиста — сами проверяем сеть раз в минуту
+  let waits = [];
+  video.addEventListener("waiting", () => {
+    if (hls || quality !== "auto" || video.currentTime < 5) return;
+    const now = Date.now();
+    waits = waits.filter((t) => now - t < 60_000).concat(now);
+    const lower = qualities().find((x) => +x < +(curQ || 0) && !badQ.has(x));
+    if (waits.length >= 3 && lower) {
+      waits = []; upVotes = 0; autoCap = lower;
+      osd(`Медленный интернет — переключили на ${qLabel(lower)}`, 2500);
+      setSource(video.currentTime);
+    }
+  });
+  const upgradeTimer = setInterval(async () => {
+    if (hls || quality !== "auto" || video.paused || !curQ) return;
+    const higher = qualities().filter((x) => +x > +curQ && !badQ.has(x));
+    if (!higher.length) { upVotes = 0; return; }
+    const target = higher.at(-1);
+    const e = ep();
+    const mbps = await measure(e.streams[target], true);
+    if (ep() !== e || mbps == null) return;
+    if (mbps < requiredMbps(target)) { upVotes = 0; return; }
+    if (++upVotes >= 2) {
+      upVotes = 0;
+      autoCap = target === qualities()[0] ? null : target;
+      recommended = target;
+      osd(`Сеть стала быстрее — включаю ${qLabel(target)}`, 2500);
+      setSource(video.currentTime);
+    }
+  }, 60_000);
 
   renderList();
   load(startPos);
@@ -437,6 +556,7 @@ function nativePlayer(root, opts) {
   return {
     destroy() {
       save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog);
+      clearInterval(upgradeTimer); if (masterUrl) URL.revokeObjectURL(masterUrl);
       window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
       if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load();
     },

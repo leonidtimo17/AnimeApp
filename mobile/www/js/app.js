@@ -1,6 +1,7 @@
 // AnimeApp для планшета: экраны и навигация.
 import * as api from "./api.js";
 import * as player from "./player.js";
+import { qualityName } from "./player.js";
 import * as src from "./sources.js";
 import * as store from "./store.js";
 import * as taste from "./taste.js";
@@ -276,7 +277,8 @@ const VIEWS = {
           </div></div></div>
       <p class="desc">${esc(rel.description || "")}</p>
       <div id="seasons"></div>
-      <div class="row-head"><h2 id="epT">Серии</h2><button class="btn small" id="dub">${fa("mic")} Озвучка: ищем…</button></div>
+      <div class="row-head"><h2 id="epT">Серии</h2><span class="sp"></span><span class="muted" id="qnote"></span>
+        <button class="btn small" id="dub">${fa("mic")} Озвучка: ищем…</button></div>
       <div class="ranges" id="ranges"></div><div class="eps" id="eps"><p class="muted">Ищем серии во всех источниках…</p></div>
       <div id="soon"></div>`;
     const $ = (s) => view.querySelector(s);
@@ -310,6 +312,8 @@ const VIEWS = {
       $("#dub").innerHTML = dub ? `${fa("mic")} ${esc(dub.name)}` : "Озвучки не найдены";
       const own = dub ? await src.episodes(rel, dub) : [];
       const ownKeys = new Set(own.map((x) => x.key));
+      const top = Math.max(0, ...own.flatMap((x) => Object.keys(x.streams || {}).filter((q) => x.streams[q]).map(Number)));
+      $("#qnote").textContent = top ? `до ${top}p (${qualityName(top)})` : (dub && !dub.native ? "плеер Kodik" : "");
       const all = [...own, ...[...union.values()].filter((s) => !ownKeys.has(s.ep.key)).map((s) => s.ep)].sort((a, b) => a.ordinal - b.ordinal);
       const prog = store.progress(id), last = store.lastProgress(id);
       $("#epT").textContent = all.length ? `Серии ${all.length}` : "Серии";

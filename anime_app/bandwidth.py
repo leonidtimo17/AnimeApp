@@ -13,18 +13,25 @@ PROBE_BYTES = 2_500_000
 PROBE_MS = 4000
 CACHE_SEC = 600
 
-# Порог скорости (Мбит/с) для качества: у AniLibria 1080p ≈ 4–6 Мбит/с, 720p ≈ 2–3 Мбит/с.
-THRESHOLDS = [(9.0, "1080"), (4.0, "720"), (0.0, "480")]
+# Сколько Мбит/с нужно для качества (по высоте кадра): 1080p ≈ 4–6 Мбит/с потока + запас.
+def required_mbps(q):
+    h = int(q)
+    return 20.0 if h >= 2000 else 12.0 if h >= 1400 else 9.0 if h >= 1000 else 4.0 if h >= 700 else 0.0
 
 
 def recommend(mbps, available=("1080", "720", "480")):
-    """Рекомендованное качество для скорости (None — скорость неизвестна → 720p)."""
-    order = ["1080", "720", "480"]
-    want = "720" if mbps is None else next(q for limit, q in THRESHOLDS if mbps >= limit)
-    for q in order[order.index(want):] + order[:order.index(want)][::-1]:
-        if q in available:
-            return q
-    return None
+    """Лучшее качество из доступных, на которое хватает скорости (скорость неизвестна → до 720p)."""
+    avail = sorted(available, key=int, reverse=True)
+    if not avail:
+        return None
+    if mbps is None:
+        return next((q for q in avail if int(q) <= 720), avail[-1])
+    return next((q for q in avail if required_mbps(q) <= mbps), avail[-1])
+
+
+def quality_name(height):
+    h = int(height)
+    return "4K" if h >= 2000 else "2K" if h >= 1400 else "Full HD" if h >= 1000 else "HD" if h >= 700 else "SD"
 
 
 class BandwidthProbe(QObject):
@@ -40,9 +47,9 @@ class BandwidthProbe(QObject):
         ts, mbps = cls._last
         return mbps if mbps is not None and time.time() - ts < CACHE_SEC else None
 
-    def measure(self, url, on_done):
-        """on_done(mbps | None). Сразу отдаёт кэш, если замер был недавно."""
-        hit = self.cached()
+    def measure(self, url, on_done, force=False):
+        """on_done(mbps | None). Сразу отдаёт кэш, если замер был недавно (force — замерить заново)."""
+        hit = None if force else self.cached()
         if hit is not None:
             QTimer.singleShot(0, lambda: on_done(hit))
             return

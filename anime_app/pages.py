@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from .api import SORTINGS, TYPES, WEEKDAYS, episode_label, fmt_ordinal, release_title
 from .db import STATUSES
+from .bandwidth import quality_name
 from .franchise import Franchise, is_movie, upcoming_episodes
 from .sources import is_external_id, norm, resume_target
 from .icons import icon, toggle_icon
@@ -984,6 +985,10 @@ class DetailsPage(Page):
         def ok(eps):
             if self.release is rel and self.dub is dub:
                 self.dub_eps = eps
+                heights = [int(q) for e in eps for q, url in (e.get("streams") or {}).items() if url]
+                if heights:
+                    top = max(heights)
+                    self.dub_note.setText(f"встроенный плеер · до {top}p ({quality_name(top)})")
                 self._render_episodes()
                 self._render_upcoming()
 

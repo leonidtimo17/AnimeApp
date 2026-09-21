@@ -19,12 +19,11 @@ from PySide6.QtWidgets import (
 )
 
 from .api import episode_label, fmt_ordinal, release_title
-from .bandwidth import BandwidthProbe, recommend
+from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
 from .sources import resume_target
 from .icons import icon as fa_icon
 from .theme import ACCENT
 
-QUALITIES = [("1080", "1080p"), ("720", "720p"), ("480", "480p")]
 SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 NEXT_COUNTDOWN = 10
 HIDE_DELAY_MS = 2800
@@ -245,6 +244,7 @@ class PlayerWindow(QWidget):
         self.setMouseTracking(True)
 
         self.release = None
+        self._new_source_loading = False
         self.current_dub = None
         self._bad_q = set()
         self.dub_name = ""
@@ -307,6 +307,16 @@ class PlayerWindow(QWidget):
         self.watchdog.timeout.connect(self._watch)
         self.watchdog.start()
         self._watch_network()
+
+        # Реальное разрешение потоков (подписи вида «480p» у источников бывают неточными)
+        self._real_h = {}          # (озвучка, качество) -> высота кадра
+        self.view.item.nativeSizeChanged.connect(self._on_native_size)
+        # Автоповышение качества: в «Авто» раз в минуту проверяем, хватает ли сети на качество выше
+        self._up_votes = 0
+        self._auto_cap = None      # потолок «Авто» после понижения из-за подгрузок
+        self.upgrade_timer = QTimer(self, interval=60000)
+        self.upgrade_timer.timeout.connect(self._check_upgrade)
+        self.upgrade_timer.start()
 
         self.view.viewport().installEventFilter(self)
         self._update_mute_icon()
@@ -483,16 +493,19 @@ class PlayerWindow(QWidget):
         ep = self.current_episode()
         mbps = BandwidthProbe.cached()
         speed = f" · {mbps:.0f} Мбит/с" if mbps else ""
-        auto = menu.addAction(f"Авто — по скорости интернета{speed}", lambda: self.set_quality("auto"))
+        eff = self._effective_quality()
+        now = f" · сейчас {self._height(eff)}p" if eff and self.quality == "auto" else ""
+        auto = menu.addAction(f"Авто — по скорости интернета{now}{speed}", lambda: self.set_quality("auto"))
         auto.setCheckable(True)
         auto.setChecked(self.quality == "auto")
         menu.addSeparator()
-        for key, name in QUALITIES:
-            text = name + ("  · рекомендовано" if key == self.recommended else "")
+        # Только те качества, что есть у этой серии; подпись — по реальному разрешению
+        for key in self._qualities():
+            text = self._qlabel(key) + ("  · рекомендовано" if key == self.recommended else "")
             act = menu.addAction(text, lambda k=key: self.set_quality(k))
             act.setCheckable(True)
-            act.setEnabled(bool(ep and ep["streams"].get(key)))
-            act.setChecked(self.quality != "auto" and key == self._effective_quality())
+            act.setEnabled(bool(ep) and key not in self._bad_q)
+            act.setChecked(self.quality != "auto" and key == eff)
         self.quality_btn.setMenu(menu)
 
     def _layout_overlay(self):
@@ -567,15 +580,45 @@ class PlayerWindow(QWidget):
     def current_episode(self):
         return self.episodes[self.index] if 0 <= self.index < len(self.episodes) else None
 
-    def _effective_quality(self):
+    def _cur_pos(self):
+        """Текущая позиция; пока поток перезагружается — та, куда собираемся перемотать."""
+        return self.pending_seek or self.player.position()
+
+    def _qualities(self):
+        """Качества, которые реально есть у текущей серии, от лучшего к худшему."""
         ep = self.current_episode() or {}
-        order = [q for q, _ in QUALITIES]
+        return sorted((q for q, url in (ep.get("streams") or {}).items() if url), key=int, reverse=True)
+
+    def _height(self, q):
+        return self._real_h.get((self.dub_name, q)) or int(q)
+
+    def _qlabel(self, q, short=False):
+        h = self._height(q)
+        return f"{quality_name(h)} {h}p" if short else f"{h}p · {quality_name(h)}"
+
+    def _on_native_size(self, size):
+        q = self._effective_quality()
+        h = int(size.height())
+        if q and h > 0 and self._real_h.get((self.dub_name, q)) != h:
+            self._real_h[(self.dub_name, q)] = h
+            self._update_quality_ui()
+
+    def _update_quality_ui(self):
+        q = self._effective_quality()
+        if q:
+            self.quality_btn.setText(("Авто · " if self.quality == "auto" else "") + self._qlabel(q, short=True))
+        self._quality_menu()
+
+    def _effective_quality(self):
+        avail = [q for q in self._qualities() if q not in self._bad_q]
+        if not avail:
+            return None
         pref = self.recommended if self.quality == "auto" else self.quality
-        start = order.index(pref) if pref in order else 1
-        for q in order[start:] + order[:start][::-1]:
-            if ep.get("streams", {}).get(q) and q not in self._bad_q:
-                return q
-        return None
+        if pref in avail:
+            return pref
+        # Нужного нет — ближайшее ниже, иначе самое низкое из доступных
+        lower = [q for q in avail if pref and int(q) < int(pref)]
+        return lower[0] if lower else avail[-1]
 
     def play_index(self, idx, position=0, save=True):
         if not 0 <= idx < len(self.episodes):
@@ -615,14 +658,17 @@ class PlayerWindow(QWidget):
             self._probe_then_load(ep, position)
             return
         if self.quality == "auto":
-            self.recommended = recommend(BandwidthProbe.cached(), tuple(ep["streams"]))
+            rec = recommend(BandwidthProbe.cached(), tuple(q for q, u in ep["streams"].items() if u))
+            # После подгрузок «Авто» не поднимается выше потолка, пока замеры не покажут, что сеть ускорилась
+            if rec and self._auto_cap and int(rec) > int(self._auto_cap):
+                rec = next((q for q in self._qualities() if int(q) <= int(self._auto_cap)), rec)
+            self.recommended = rec
         q = self._effective_quality()
         if not q:
             return
-        label = {"1080": "FHD", "720": "HD", "480": "SD"}[q]
-        self.quality_btn.setText(("Авто · " + label) if self.quality == "auto" else label)
-        self._quality_menu()
+        self._update_quality_ui()
         self.pending_seek = position if position and position > 3000 else None
+        self._new_source_loading = False  # перемотку применяем только к новому потоку (см. _on_status)
         url = QUrl(self.current_episode()["streams"][q])
         if self.player.source() == url:
             self.player.setSource(QUrl())  # та же ссылка — Qt не перезагрузит поток без сброса
@@ -652,7 +698,7 @@ class PlayerWindow(QWidget):
                 BandwidthProbe._last = (__import__("time").time(), 5.0)  # не мерить снова каждую серию
             self._load_source(position)
             if mbps:
-                self.show_osd(f"Интернет ~{mbps:.0f} Мбит/с → {self.recommended}p (рекомендовано)", 2500)
+                self.show_osd(f"Интернет ~{mbps:.0f} Мбит/с → {self._qlabel(self.recommended)} (рекомендовано)", 2500)
 
         self.probe.measure(url, done)
 
@@ -662,16 +708,46 @@ class PlayerWindow(QWidget):
             return
         now = __import__("time").time()
         self._stalls = [t for t in self._stalls if now - t < 60] + [now]
-        order = [q for q, _ in QUALITIES]
         q = self._effective_quality()
-        if len(self._stalls) >= 3 and q and order.index(q) < len(order) - 1:
-            ep = self.current_episode() or {}
-            lower = next((x for x in order[order.index(q) + 1:] if ep.get("streams", {}).get(x)), None)
+        if len(self._stalls) >= 3 and q:
+            lower = next((x for x in self._qualities() if int(x) < int(q) and x not in self._bad_q), None)
             if lower:
                 self._stalls = []
+                self._up_votes = 0
+                self._auto_cap = lower
                 self.recommended = lower
-                self.show_osd(f"Медленный интернет — переключили на {lower}p", 2500)
-                self._load_source(self.player.position())
+                self.show_osd(f"Медленный интернет — переключили на {self._qlabel(lower)}", 2500)
+                self._load_source(self._cur_pos())
+
+    def _check_upgrade(self):
+        """«Авто»: сеть стала быстрее — переходим на качество выше (после двух удачных замеров подряд)."""
+        if self.quality != "auto" or self._probing or not self.current_episode():
+            return
+        if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return
+        cur = self._effective_quality()
+        higher = [q for q in self._qualities() if cur and int(q) > int(cur) and q not in self._bad_q]
+        if not higher:
+            self._up_votes = 0
+            return
+        target = higher[-1]  # ближайшее качество выше текущего
+        ep = self.current_episode()
+
+        def done(mbps):
+            if mbps is None or self.quality != "auto" or self.current_episode() is not ep:
+                return
+            if mbps < required_mbps(target):
+                self._up_votes = 0
+                return
+            self._up_votes += 1
+            if self._up_votes >= 2:
+                self._up_votes = 0
+                self._auto_cap = None if target == self._qualities()[0] else target
+                self.recommended = target
+                self.show_osd(f"Сеть стала быстрее — включаю {self._qlabel(target)}", 2500)
+                self._load_source(self._cur_pos())
+
+        self.probe.measure(ep["streams"][target], done, force=True)
 
     def _update_marks(self):
         ep = self.current_episode() or {}
@@ -719,14 +795,14 @@ class PlayerWindow(QWidget):
     def set_quality(self, q):
         self.quality = q
         self.db.set_setting("quality_mode", q)
-        pos = self.player.position()
+        pos = self._cur_pos()
         was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         self._load_source(pos)
         if not was_playing:
             self.player.pause()
         eff = self._effective_quality()
         if eff:
-            self.show_osd(("Авто: " if q == "auto" else "Качество ") + dict(QUALITIES)[eff])
+            self.show_osd(("Авто: " if q == "auto" else "Качество ") + self._qlabel(eff))
 
     def _set_volume(self, v):
         self.audio.setVolume(v / 100)
@@ -835,7 +911,11 @@ class PlayerWindow(QWidget):
                 self._on_stall()
         else:
             self.loading.hide()
-        if status in (S.LoadedMedia, S.BufferedMedia) and self.pending_seek:
+        if status == S.LoadingMedia:
+            self._new_source_loading = True
+        # Сразу после смены источника Qt присылает запоздалый «LoadedMedia» от старого потока —
+        # перемотку тратим только когда новый поток действительно начал загружаться.
+        if status in (S.LoadedMedia, S.BufferedMedia) and self.pending_seek and self._new_source_loading:
             pos, self.pending_seek = self.pending_seek, None
             self.player.setPosition(int(pos))
         if status == S.EndOfMedia:
@@ -872,6 +952,9 @@ class PlayerWindow(QWidget):
 
     def _network_changed(self):
         BandwidthProbe._last = (0.0, None)   # скорость в новой сети другая — замерим заново
+        self._up_votes = 0
+        self._auto_cap = None
+        QTimer.singleShot(8000, self._check_upgrade)
         if self._frozen_since is None and self.current_episode():
             # Проверим поток побыстрее, чем через обычные 12 секунд
             self._frozen_since = time.time() - 8
@@ -945,10 +1028,9 @@ class PlayerWindow(QWidget):
             QTimer.singleShot(2000, self._recover)
             return
         q = self._effective_quality()
-        order = [k for k, _ in QUALITIES]
-        lower = [k for k in order[order.index(q) + 1:] if (self.current_episode() or {}).get("streams", {}).get(k)] if q else []
+        lower = [k for k in self._qualities() if q and int(k) < int(q) and k not in self._bad_q]
         if lower:
-            self.show_osd(f"Нет {q}p, переключаемся на {lower[0]}p", 2500)
+            self.show_osd(f"Нет {self._qlabel(q)}, переключаемся на {self._qlabel(lower[0])}", 2500)
             pos = self.pending_seek or self.player.position()
             self._bad_q.add(q)
             self._load_source(pos)
