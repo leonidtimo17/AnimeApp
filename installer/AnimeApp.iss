@@ -2,7 +2,7 @@
 ; Сборка: build_installer.bat (сначала PyInstaller, потом этот скрипт).
 
 #define AppName "AnimeApp"
-#define AppVersion "1.5.6"
+#define AppVersion "1.6.0"
 #define AppExe "AnimeApp.exe"
 
 [Setup]

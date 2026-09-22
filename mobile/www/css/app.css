@@ -235,3 +235,60 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 .poster > .badges, .poster > .quick { z-index: 2; }
 .thumb.fallback::before { z-index: 1; }
 .thumb > span, .thumb > .tbar { z-index: 2; }
+
+/* ===================== Страница просмотра как на YouTube ===================== */
+#player { display: flex; gap: 22px; background: var(--bg); overflow: hidden;
+  padding: calc(14px + var(--safe-top)) 22px 0; box-sizing: border-box; }
+#player .pv-main { flex: 1; min-width: 0; overflow-y: auto; padding-bottom: calc(24px + var(--safe-bottom)); }
+#player .pv-video { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100vh - 160px);
+  background: #000; border-radius: 14px; overflow: hidden; }
+#player .pv-side { width: min(380px, 34vw); flex: none; display: flex; flex-direction: column; min-height: 0;
+  padding-bottom: var(--safe-bottom); }
+.pv-title { font-size: 21px; line-height: 1.25; margin: 14px 0 4px; }
+.pv-sub { color: var(--muted); font-size: 14px; }
+.pv-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.pv-actions .chip .fa { margin-right: 4px; }
+.pv-actions .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pv-desc { background: var(--surface); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5; color: #d4d4dc;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; white-space: pre-line; }
+.pv-desc.open { -webkit-line-clamp: unset; display: block; }
+.pv-h { font-size: 18px; margin: 20px 0 6px; }
+.pv-chips { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.pv-chips .chip.on { background: #f2f2f5; color: #111; border-color: #f2f2f5; }
+/* список серий справа — те же строки с кадрами, что и в плеере, но на странице */
+#player .pv-list { position: static; width: auto; background: none; padding: 0; overflow-y: auto; flex: 1; min-height: 0; z-index: auto; }
+#player .pv-list .it { border-radius: 10px; }
+#player .pv-list .it .thumb { width: 150px; }
+/* на странице лишнее из видео прячем: название (оно ниже), список серий и обсуждение (они на странице) */
+#player:not(.fs) .pv-video .ttl,
+#player:not(.fs) .pv-video [data-a=list], #player:not(.fs) .pv-video [data-a=eps],
+#player:not(.fs) .pv-video [data-a=comments], #player:not(.fs) .pv-video [data-a=zoom] { display: none; }
+#player:not(.fs) .pv-video .pl-top { padding-top: 8px; }
+#player:not(.fs) .pv-video .pl-bottom, #player:not(.fs) .pv-video .kpanel { padding-bottom: 8px; }
+#player:not(.fs) .pv-video .kpanel { height: 96px; }
+#player:not(.fs) .pv-video .pl-list { top: 0; bottom: 0; }
+.pv-video.k-ad iframe.kodik { top: 56px; bottom: 96px; height: auto; transform: none; }
+/* обсуждение на странице — обычный блок под описанием, поле ввода сверху, как у YouTube */
+#player:not(.fs) .pl-comments { position: static; width: auto; background: none; padding: 0; z-index: auto; display: flex; }
+#player:not(.fs) .pl-comments[hidden] { display: none; }
+#player:not(.fs) .pl-comments .ch { order: -2; }
+#player:not(.fs) .pl-comments .cf { order: -1; margin: 6px 0 4px; }
+#player:not(.fs) .pl-comments .cl { overflow: visible; flex: none; }
+#player:not(.fs) .pl-comments [data-cx] { display: none; }
+/* полный экран: только видео */
+#player.fs { padding: 0; background: #000; }
+#player.fs .pv-main { overflow: visible; padding: 0; }
+#player.fs .pv-video { position: fixed; inset: 0; max-height: none; aspect-ratio: auto; border-radius: 0; z-index: 5; }
+#player.fs .pv-info, #player.fs .pv-side { display: none; }
+/* книжная ориентация и узкие экраны: всё в одну колонку, видео прилипает сверху */
+@media (orientation: portrait), (max-width: 900px) {
+  #player:not(.fs) { flex-direction: column; gap: 0; overflow-y: auto; padding: var(--safe-top) 0 0; }
+  /* порядок как в приложении YouTube: видео → название и кнопки → серии → обсуждение */
+  #player:not(.fs) .pv-main, #player:not(.fs) .pv-info { display: contents; }
+  #player:not(.fs) .pv-video { order: 1; flex: none; position: sticky; top: 0; z-index: 4; border-radius: 0; max-height: 45vh; }
+  #player:not(.fs) .pv-top { order: 2; padding: 0 16px; }
+  #player:not(.fs) .pv-side { order: 3; width: auto; flex: none; padding: 8px 16px 0; }
+  #player:not(.fs) .pv-h { order: 4; padding: 0 16px; }
+  #player:not(.fs) .pl-comments { order: 5; padding: 0 16px calc(24px + var(--safe-bottom)); }
+  #player:not(.fs) .pv-list { overflow: visible; flex: none; }
+}

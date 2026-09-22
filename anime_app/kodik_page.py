@@ -10,10 +10,11 @@ import time
 
 from PySide6.QtCore import QProcess, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QWindow
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from .api import release_title
 from .comments_panel import CommentsPanel
+from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
 from .icons import icon
 from .player import SLEEP, fill_dub_menu, fill_season_menu
 from .sources import resume_target
@@ -35,7 +36,8 @@ class KodikPage(QWidget):
         self.ep_key = None
         self._launch = None
         self.pos = 0.0
-        self.setStyleSheet("background:#000;")
+        self.setObjectName("WatchPage")
+        self.setStyleSheet(PAGE_QSS)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -88,22 +90,41 @@ class KodikPage(QWidget):
         bl.addWidget(self.fs_btn)
         lay.addWidget(self.bar)
 
-        self.body = QVBoxLayout()
+        # Страница просмотра как на YouTube: слева видео и описание, справа серии (или обсуждение)
+        self.row = QHBoxLayout()
+        self.row.setSpacing(20)
+        self.leftw = QWidget()
+        self.left_lay = QVBoxLayout(self.leftw)
+        self.left_lay.setContentsMargins(0, 0, 0, 0)
+        self.holder = QWidget()      # окно веб-плеера (видео + его панель управления)
+        self.holder.setStyleSheet("background:#000;")
+        self.holder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.body = QVBoxLayout(self.holder)
+        self.body.setContentsMargins(0, 0, 0, 0)
         self.status = QLabel("Запускаем плеер…")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setStyleSheet("color:#9a9aa6;font-size:15px;")
         self.body.addWidget(self.status, 1)
-        row = QHBoxLayout()
-        row.setSpacing(0)
-        row.addLayout(self.body, 1)
-        # Обсуждение серии справа от видео (поверх окна WebView ничего не нарисовать)
+        self.left_lay.addWidget(self.holder)
+        self.info = WatchInfo(ctx, self.dub_menu, self.season_menu)
+        self.info.use_comments_button()
+        self.info.fullscreen_clicked.connect(self.toggle_fullscreen)
+        self.info.comments_clicked.connect(self.toggle_comments)
+        self.left_lay.addWidget(self.info)
+        self.left_lay.addStretch(1)
+        self.row.addWidget(self.leftw, 1)
+        self.side = EpisodeSide(ctx)
+        self.side.setFixedWidth(400)
+        self.side.picked.connect(self._pick)
+        self.row.addWidget(self.side)
+        # Обсуждение серии справа, вместо списка серий (поверх окна WebView ничего не нарисовать)
         self.comments = CommentsPanel(ctx, lambda: (self.release, self._episode(), self.pos))
         self.comments.setFixedWidth(400)
         self.comments.seek_requested.connect(self._seek)
-        self.comments.closed.connect(lambda: self.container and self.container.setFocus())
+        self.comments.closed.connect(self._comments_closed)
         self.comments.hide()
-        row.addWidget(self.comments)
-        lay.addLayout(row, 1)
+        self.row.addWidget(self.comments)
+        lay.addLayout(self.row, 1)
         self.tick = QTimer(self, interval=1000)
         self.tick.timeout.connect(self.comments.tick)
         self.tick.start()
@@ -113,10 +134,59 @@ class KodikPage(QWidget):
         fill_dub_menu(self.dub_menu, dubs, current_id, self.dub_selected.emit)
         name = next((d["name"] for d in dubs if d["id"] == current_id), "")
         self.dub_btn.setText("  " + name)
+        self.info.dub.setText("  " + name)
 
     def set_seasons(self, entries):
         fill_season_menu(self.season_menu, entries, self.season_selected.emit)
         self.season_btn.setVisible(bool(entries))
+        self.info.set_has_seasons(bool(entries))
+
+    # ------------------------------------------------------------ страница / полный экран
+    def _apply_mode(self):
+        fs = self.window().isFullScreen()
+        self.bar.setVisible(not fs)
+        self.info.setVisible(not fs)
+        self.side.setVisible(not fs and not self.comments.isVisible())
+        if fs:
+            self.comments.hide()
+        self.row.setContentsMargins(0, 0, 0, 0) if fs else self.row.setContentsMargins(20, 14, 20, 12)
+        self._fit()
+
+    def _fit(self):
+        if self.window().isFullScreen():
+            self.holder.setMinimumHeight(0)
+            self.holder.setMaximumHeight(16777215)
+            return
+        # видео 16:9 плюс панель управления веб-плеера под ним, но чтобы описание помещалось
+        w = max(320, self.leftw.width())
+        h = int(min(w * 9 / 16 + 72, self.height() - self.bar.height() - self.info.sizeHint().height() - 40))
+        self.holder.setFixedHeight(max(240, h))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        QTimer.singleShot(0, self._fit)
+
+    def _index(self):
+        return next((i for i, e in enumerate(self.eps) if e["key"] == self.ep_key), 0)
+
+    def _show_episode(self):
+        if not self.release or not self.eps:
+            return
+        i = self._index()
+        name = self.dub_btn.text().strip()
+        self.info.set_episode(self.release, self.eps[i], i, len(self.eps), name)
+        self.side.set_current(i)
+
+    def _pick(self, i):
+        """Серия из списка справа — команда веб-плееру."""
+        if self.proc:
+            self.proc.write((json.dumps({"cmd": "episode", "i": i}) + "\n").encode())
+
+    def _comments_closed(self):
+        self.info.cm.setChecked(False)
+        self.side.setVisible(not self.window().isFullScreen())
+        if self.container:
+            self.container.setFocus()
 
     def current_state(self):
         """(ключ серии, позиция мс) по последнему сохранённому прогрессу."""
@@ -147,6 +217,8 @@ class KodikPage(QWidget):
         if self.comments.isVisible():
             self.comments.close_panel()
         else:
+            self.side.hide()
+            self.info.cm.setChecked(True)
             self.comments.open_panel()
 
     def _seek(self, sec):
@@ -160,6 +232,9 @@ class KodikPage(QWidget):
         self.release = release
         self.eps = eps
         self.ep_key = key
+        self.dub_btn.setText("  " + dub["name"])
+        self.side.set_episodes(release, eps, 0, self.ctx.api.poster_url(release))
+        self._apply_mode()
         self.title.setText(release_title(release))
         self.status.setText("Запускаем плеер…")
         self.status.show()
@@ -227,6 +302,7 @@ class KodikPage(QWidget):
             elif kind == "episode":
                 self.ep_key = msg.get("key")
                 self.comments.episode_changed()
+                self._show_episode()
             elif kind == "error":
                 self.status.setText(msg.get("message", "Ошибка плеера"))
             elif kind == "setting" and msg.get("key") in ("zoom_fill",):
@@ -254,10 +330,9 @@ class KodikPage(QWidget):
         win = self.window()
         if win.isFullScreen():
             win.showNormal()
-            self.bar.show()
         else:
-            win.showFullScreen()
-            self.bar.hide()   # на весь экран — только видео и его панель (Esc/F — выйти)
+            win.showFullScreen()   # на весь экран — только видео и его панель (Esc/F — выйти)
+        self._apply_mode()
         self.fs_btn.setIcon(icon("compress" if win.isFullScreen() else "expand", TEXT, 16))
         if self.container:
             self.container.setFocus()

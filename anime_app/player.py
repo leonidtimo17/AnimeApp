@@ -16,13 +16,14 @@ from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
-    QFrame, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMenu, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QApplication, QFrame, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMenu, QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
 from .api import episode_label, fmt_ordinal, release_title
 from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
 from .comments_panel import CommentsPanel
+from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
 from .sources import resume_target
 from .icons import icon as fa_icon
 from .images import episode_thumb
@@ -279,7 +280,8 @@ class PlayerWindow(QWidget):
         self.ctx = ctx
         self.db = ctx.db
         self.setMinimumSize(320, 180)
-        self.setStyleSheet(OVERLAY_QSS)
+        self.setObjectName("WatchPage")
+        self.setStyleSheet(OVERLAY_QSS + PAGE_QSS)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
 
@@ -303,6 +305,7 @@ class PlayerWindow(QWidget):
         self.next_cancelled = False
         self.countdown = 0
         self.pip = False
+        self.fs = False          # полный экран: только видео (иначе — страница просмотра как на YouTube)
         self.normal_geometry = None
         self.drag_origin = None
         self._last_mouse = None
@@ -316,11 +319,34 @@ class PlayerWindow(QWidget):
         self.view = VideoView(self)
         self.view.set_fill(self.db.setting("zoom_fill", False))
         self.player.setVideoOutput(self.view.item)
-        root = QVBoxLayout(self)
+        # Страница просмотра: слева видео, под ним название, кнопки, описание и обсуждение; справа — серии
+        root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(self.view)
+        root.setSpacing(0)
+        self.left = QWidget()
+        self.left.setObjectName("WatchPage")
+        self.left_lay = QVBoxLayout(self.left)
+        self.left_lay.setSpacing(4)
+        self.left_lay.addWidget(self.view)
+        # Левая колонка прокручивается, как страница YouTube: видео, под ним описание и обсуждение
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setObjectName("WatchPage")
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.left_scroll.setWidget(self.left)
+        root.addWidget(self.left_scroll, 1)
 
         self._build_overlay()
+
+        self.info = WatchInfo(ctx, self.dub_menu, self.season_menu)
+        self.info.fullscreen_clicked.connect(self.toggle_fullscreen)
+        self.left_lay.addWidget(self.info)
+        self.side = EpisodeSide(ctx)
+        self.side.setObjectName("WatchPage")
+        self.side.setFixedWidth(400)
+        self.side.picked.connect(lambda i: self.play_index(i, None))
+        root.addWidget(self.side)
 
         self.player.positionChanged.connect(self._on_position)
         self.player.durationChanged.connect(self._on_duration)
@@ -520,10 +546,12 @@ class PlayerWindow(QWidget):
         fill_dub_menu(self.dub_menu, dubs, current_id, self.dub_selected.emit)
         name = next((d["name"] for d in dubs if d["id"] == current_id), self.dub_name)
         self.dub_btn.setText(" " + name)
+        self.info.dub.setText("  " + name)
 
     def set_seasons(self, entries):
         fill_season_menu(self.season_menu, entries, self.season_selected.emit)
         self.season_btn.setVisible(bool(entries))
+        self.info.set_has_seasons(bool(entries))
 
     def current_state(self):
         """(ключ серии, позиция мс) — чтобы продолжить с того же места в другой озвучке."""
@@ -590,9 +618,12 @@ class PlayerWindow(QWidget):
         panel_w = min(360, int(w * 0.4))
         self.ep_list.setGeometry(w - panel_w, 0, panel_w, h)
         comments_w = min(430, int(w * 0.45))
-        self.comments.setGeometry(w - comments_w, 0, comments_w, h)
+        overlay_comments = self.comments.parent() is self.view
+        if overlay_comments:
+            self.comments.setGeometry(w - comments_w, 0, comments_w, h)
         margin_bottom = bh + 16 if self.bottom.isVisible() else 40
-        side = max(panel_w if self.ep_list.isVisible() else 0, comments_w if self.comments.isVisible() else 0)
+        side = max(panel_w if self.ep_list.isVisible() else 0,
+                   comments_w if overlay_comments and self.comments.isVisible() else 0)
         right = w - side - 32
         self.skip_btn.adjustSize()
         self.skip_btn.move(right - self.skip_btn.width(), h - self.skip_btn.height() - margin_bottom)
@@ -605,7 +636,52 @@ class PlayerWindow(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        QTimer.singleShot(0, lambda: (self._fit_video(), self._layout_overlay()))
+
+    # ============================================================ страница / полный экран
+    def _video_only(self):
+        return self.fs or self.pip
+
+    def _apply_mode(self):
+        """Страница просмотра или только видео (полный экран, мини-плеер)."""
+        only = self._video_only()
+        self.info.setVisible(not only)
+        self.side.setVisible(not only)
+        self.left_lay.setContentsMargins(0, 0, 0, 0) if only else self.left_lay.setContentsMargins(20, 16, 20, 0)
+        self.layout().setContentsMargins(0, 0, 0 if only else 20, 0)
+        self.layout().itemAt(1).widget().setContentsMargins(0, 0 if only else 16, 0, 0)
+        self.left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff if only
+                                                    else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        if only:
+            # обсуждение — по кнопке поверх видео
+            if self.comments.parent() is not self.view:
+                self.left_lay.removeWidget(self.comments)
+                self.comments.setParent(self.view)
+                self.comments.setMinimumHeight(0)
+                self.comments.setMaximumHeight(16777215)
+                self.comments.hide()
+            self.view.setMinimumHeight(0)
+            self.view.setMaximumHeight(16777215)
+            self.left_scroll.verticalScrollBar().setValue(0)
+        else:
+            # обсуждение — под видео, как комментарии на YouTube
+            if self.comments.parent() is self.view:
+                self.comments.setParent(self.left)
+                self.left_lay.addWidget(self.comments)
+            self.comments.setFixedHeight(620)
+            if self.release:
+                self.comments.open_panel()
+        self._set_icon(self.fs_btn, I_UNFULL if self.fs else I_FULL)
+        self._fit_video()
         QTimer.singleShot(0, self._layout_overlay)
+
+    def _fit_video(self):
+        """На странице видео 16:9 по ширине колонки, но так, чтобы под ним оставалось место для кнопок."""
+        if self._video_only():
+            return
+        w = max(320, self.left_scroll.viewport().width() - 40)
+        h = int(min(w * 9 / 16, self.height() - 150))
+        self.view.setFixedHeight(max(200, h))
 
     # ============================================================ loading
     def open(self, release, episodes, dub_name, episode_key=None, position=None):
@@ -623,6 +699,8 @@ class PlayerWindow(QWidget):
         else:
             idx, pos = resume_target(release["id"], self.episodes, self.db)
         self._fill_episode_list()
+        self.side.set_episodes(release, self.episodes, idx, self.ctx.api.poster_url(release))
+        self._apply_mode()
         self.play_index(idx, pos if position is None else position, save=False)
         self._mark_watching()
         self.setFocus()
@@ -735,6 +813,9 @@ class PlayerWindow(QWidget):
         self.prev_btn.setEnabled(idx > 0)
         self.next_btn.setEnabled(idx < len(self.episodes) - 1)
         self._update_marks()
+        self.info.set_episode(self.release, ep, idx, len(self.episodes), self.dub_name)
+        if self.side.release is self.release:
+            self.side.set_current(idx)
         self.comments.episode_changed()
         self._load_source(position)
         if position and position > 15_000:
@@ -1045,7 +1126,7 @@ class PlayerWindow(QWidget):
     def _on_state(self, state):
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._set_icon(self.play_btn, I_PAUSE if playing else I_PLAY)
-        self._set_icon(self.fs_btn, I_UNFULL if self.window().isFullScreen() else I_FULL)
+        self._set_icon(self.fs_btn, I_UNFULL if self.fs else I_FULL)
         # Состояние меняется и само — при перезагрузке потока (смена качества, восстановление сети).
         # Панель показываем только на паузе, а при воспроизведении лишь перезапускаем таймер скрытия.
         if playing:
@@ -1233,7 +1314,8 @@ class PlayerWindow(QWidget):
         if self.comments.isVisible():
             self.comments.close_panel()
             return
-        self.ep_list.hide()
+        if self.comments.parent() is self.view:
+            self.ep_list.hide()
         self.comments.open_panel()
         self._layout_overlay()
 
@@ -1278,12 +1360,13 @@ class PlayerWindow(QWidget):
     def toggle_fullscreen(self):
         if self.pip:
             self.toggle_pip()
+        self.fs = not self.fs
         win = self.window()
-        if win.isFullScreen():
-            win.showNormal()
-        else:
+        if self.fs:
             win.showFullScreen()
-        self._set_icon(self.fs_btn, I_UNFULL if win.isFullScreen() else I_FULL)
+        else:
+            win.showNormal()
+        self._apply_mode()
         self.setFocus()
         self.poke()
 
@@ -1300,18 +1383,21 @@ class PlayerWindow(QWidget):
             area = screen.availableGeometry()
             w, h = 480, 270
             self.setGeometry(area.right() - w - 24, area.bottom() - h - 24, w, h)
+            self._apply_mode()
             self.show()
             self.show_osd("Мини-плеер · I — вернуть")
         else:
             self.pip = False
             self.pip_toggled.emit(False)    # главное окно встраивает плеер обратно
+            self._apply_mode()
         self.setFocus()
 
     def close_player(self):
         """Закрыть плеер и вернуться туда, откуда пришли."""
-        if self.window().isFullScreen() and not self.pip:
+        if self.fs and not self.pip:
             self.window().showNormal()
-            self._set_icon(self.fs_btn, I_FULL)
+        self.fs = False
+        self._apply_mode()
         self.stop()
         if self.pip:
             self.pip = False
@@ -1370,6 +1456,10 @@ class PlayerWindow(QWidget):
             self.toggle_fullscreen()
             return True
         elif t == e.Type.Wheel:
+            if not self._video_only():
+                # на странице колесо над видео прокручивает страницу (как на YouTube), громкость — ↑/↓
+                QApplication.sendEvent(self.left_scroll.verticalScrollBar(), e)
+                return True
             self.change_volume(5 if e.angleDelta().y() > 0 else -5)
             return True
         return super().eventFilter(obj, e)
@@ -1416,7 +1506,7 @@ class PlayerWindow(QWidget):
                 self.comments.close_panel()
             elif self.ep_list.isVisible():
                 self.ep_list.hide()
-            elif self.window().isFullScreen() and not self.pip:
+            elif self.fs and not self.pip:
                 self.toggle_fullscreen()
             elif self.pip:
                 self.toggle_pip()

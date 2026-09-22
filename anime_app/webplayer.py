@@ -425,6 +425,8 @@ def run(job_path):
             if msg.get("cmd") == "seek":
                 t = int(msg.get("t") or 0)
                 window.evaluate_js(f"seek({t}); osd('Перемотка на ' + fmt({t}))")
+            elif msg.get("cmd") == "episode":   # серия выбрана в списке справа
+                window.evaluate_js(f"load({int(msg.get('i') or 0)}, null)")
 
     # Прогресс сохраняется каждые 5 с и на паузе, так что при закрытии теряется максимум 5 с.
     def start():

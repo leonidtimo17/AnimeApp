@@ -8,7 +8,7 @@ export const I = {
   rewind: "&#xf2ea;", forward: "&#xf2f9;", list: "&#xf0ca;", expand: "&#xf065;", compress: "&#xf066;",
   heart: "&#xf004;", bookmark: "&#xf02e;", star: "&#xf005;", check: "&#xf00c;", circleCheck: "&#xf058;",
   plus: "&#x2b;", mic: "&#xf130;", layers: "&#xf5fd;", gear: "&#xf013;", calendar: "&#xf073;", magic: "&#xe2ca;",
-  refresh: "&#xf2f9;", trash: "&#xf2ed;", filter: "&#xf0b0;", history: "&#xf1da;", moon: "&#xf186;", comments: "&#xf086;", link: "&#xf0c1;",
+  refresh: "&#xf2f9;", trash: "&#xf2ed;", filter: "&#xf0b0;", history: "&#xf1da;", moon: "&#xf186;", comments: "&#xf086;", link: "&#xf0c1;", zoom: "&#xf00e;",
 };
 export const fa = (k, cls = "fa") => `<i class="${cls}">${I[k]}</i>`;
 

@@ -133,6 +133,9 @@ export function commentsPanel(root, o) {
     isOpen: () => !box.hidden,
     /** Сменилась серия — при следующем открытии загрузим её обсуждение. */
     episodeChanged() { forKey = null; if (!box.hidden) toggle(true); },
+    /** Перенести панель: под видео (страница просмотра) или поверх видео (полный экран). */
+    mount(el) { if (box.parentNode !== el) el.appendChild(box); },
+    el: box,
     destroy() { clearInterval(timer); box.remove(); },
   };
 }
