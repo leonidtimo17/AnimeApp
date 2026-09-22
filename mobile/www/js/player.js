@@ -423,6 +423,7 @@ function nativePlayer(root, opts) {
   function setSource(pos) {
     const q = effQ();
     if (!q) return;
+    reloading = true;  // смена потока сама шлёт «pause»/«play» — панель от них не показываем
     const url = ep().streams[q];
     curQ = q;
     updateQualityUi();
@@ -567,9 +568,12 @@ function nativePlayer(root, opts) {
 
   // --- события видео
   video.addEventListener("waiting", () => ($(".spinner").hidden = false));
-  video.addEventListener("playing", () => { $(".spinner").hidden = true; $("[data-a=play]").innerHTML = fa("pause"); poke(); });
+  let reloading = false;
+  video.addEventListener("playing", () => { $(".spinner").hidden = true; $("[data-a=play]").innerHTML = fa("pause"); reloading = false; });
+  // «playing» приходит и после каждой подгрузки — от него панель не показываем, иначе она всплывает сама
+  video.addEventListener("play", () => { if (!reloading) poke(); });
   video.addEventListener("canplay", () => ($(".spinner").hidden = true));
-  video.addEventListener("pause", () => { $("[data-a=play]").innerHTML = fa("play"); poke(); save(); });
+  video.addEventListener("pause", () => { $("[data-a=play]").innerHTML = fa("play"); if (!reloading) poke(); save(); });
   video.addEventListener("loadedmetadata", () => { renderMarks(); fillSkips(); });
   // Нет разметки заставки/титров у источника — берём у AniSkip
   async function fillSkips() {
@@ -789,9 +793,10 @@ function kodikPlayer(root, opts) {
       <div class="ttl"><b>${esc(src.title(rel))}</b><small class="sub"></small></div>
       <button class="pl-btn" data-a="seasons" ${opts.seasons?.length ? "" : "hidden"}>${fa("layers")}</button>
       <button class="pl-btn txt" data-a="dub">${fa("mic")} ${esc(opts.dub.name)}</button>
+      <button class="pl-btn txt" data-a="adblock" title="Блокировать рекламу Kodik"></button>
       <button class="pl-btn" data-a="comments" title="Обсуждение серии">${fa("comments")}</button>
     </div>
-    <iframe class="kodik" allow="autoplay; fullscreen" allowfullscreen></iframe>
+    <iframe class="kodik" allow="autoplay"></iframe>
     <div class="spinner"></div>
     <div class="pl-osd" hidden></div>
     <div class="pl-pill kpill"></div>
@@ -821,6 +826,15 @@ function kodikPlayer(root, opts) {
   const osd = (t, ms = 1000) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), ms); };
   const setAd = (on) => { root.classList.toggle("k-ad", on); if (on) poke(); };
   const cp = commentsPanel(root, { rel, ep: () => eps[idx], time: () => pos, seek: (s) => seek(s), osd: (t) => osd(t) });
+  // Блокировка рекламы: пока открыт Kodik, приложение пропускает только его серверы (нативный фильтр запросов)
+  let adblock = store.setting("kodikAdblock", true), adCheck = null;
+  const setAdblock = (on) => {
+    adblock = on;
+    window.Capacitor?.Plugins?.PlayerScreen?.adblock?.({ on }).catch(() => {});
+    $("[data-a=adblock]").innerHTML = `${on ? fa("check") : fa("plus")} Без рекламы`;
+    $("[data-a=adblock]").classList.toggle("on", on);
+  };
+  setAdblock(adblock);
   let hideTimer = null;
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
   const tryHide = () => {
@@ -878,6 +892,14 @@ function kodikPlayer(root, opts) {
       const r = e.kodik ? { src: e.kodik, team: opts.dub.name } : await src.kodikSource(e.animelib, team);
       $(".sub").textContent = `${src.fmtOrd(e.ordinal)} серия · ${r.team || opts.dub.name}${r.fallback ? " (выбранной озвучки нет — другая)" : ""}`;
       frame.src = r.src;
+      // Видео не пошло с блокировкой (Kodik сменил серверы) — выключаем её для этого просмотра
+      clearTimeout(adCheck);
+      if (adblock) adCheck = setTimeout(() => {
+        if (dur || !adblock) return;
+        setAdblock(false);
+        osd("Видео не загрузилось без рекламы — включаем как есть", 3000);
+        load(idx, seekTo || pos);
+      }, 25000);
     } catch (err) {
       $(".spinner").hidden = true;
       toast(err.message);
@@ -917,7 +939,12 @@ function kodikPlayer(root, opts) {
       if (op?.stop && op.start != null && pos >= op.start && pos < op.stop - 2 && store.setting("autoskip", false) && !e._skipped) {
         e._skipped = true; seek(op.stop); osd("Заставка пропущена");
       }
-    } else if (d.key === "kodik_player_play") { playing = true; userPaused = false; lastTick = Date.now(); render(); poke(); }
+    } else if (d.key === "kodik_player_play") {
+      // Kodik шлёт «play» и после подгрузок/рекламы — показываем панель, только если видео правда стояло
+      const was = playing;
+      playing = true; userPaused = false; lastTick = Date.now(); render();
+      if (!was) poke();
+    }
     else if (d.key === "kodik_player_pause") { playing = false; userPaused = true; render(); save(true); poke(); }
     else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); if (!sleepAfterEpisode(osd)) countdown(); }
     else if (d.event === "adShown" || d.title === "vastStarted" || d.key === "kodik_player_advert_started") setAd(true);
@@ -975,6 +1002,12 @@ function kodikPlayer(root, opts) {
     else if (a === "fs") { const fill = !root.classList.contains("zoom-fill"); zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); }
     else if (a === "sleep") sleepMenu(osd);
     else if (a === "comments") cp.toggle();
+    else if (a === "adblock") {
+      store.setSetting("kodikAdblock", !adblock);
+      setAdblock(!adblock);
+      osd(adblock ? "Реклама блокируется" : "Реклама не блокируется");
+      load(idx, pos);  // перезагружаем серию с того же места, чтобы настройка подействовала
+    }
   };
   $(".kplist").addEventListener("click", (ev) => {
     const it = ev.target.closest("[data-i]");
@@ -1008,6 +1041,8 @@ function kodikPlayer(root, opts) {
   return { destroy() {
     save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); clearInterval(sleepTimer);
     unbindKeys(); cp.destroy(); window.removeEventListener("blur", onBlur);
+    clearTimeout(adCheck);
+    window.Capacitor?.Plugins?.PlayerScreen?.adblock?.({ on: false }).catch(() => {});
     window.removeEventListener("message", onMsg);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);

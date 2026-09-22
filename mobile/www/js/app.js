@@ -55,6 +55,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ------------------------------------------------------------------ Shikimori: вход, статистика, список
+/** Подпись вкладки: ник, если вошли. */
+function shikiTab() {
+  const u = shiki.user();
+  const b = document.getElementById("tabShiki");
+  if (b) b.querySelector("span").textContent = u ? u.nickname : "Shikimori";
+}
+shikiTab();
 async function shikiBox(el, refresh) {
   const cfg = await shiki.config();
   const u = shiki.user();
@@ -252,14 +259,18 @@ const VIEWS = {
     reload();
   },
 
+  account() {
+    view.innerHTML = `<h1>Shikimori</h1><div class="shiki-box" id="shk"></div>
+      <p class="muted">Читать обсуждения серий можно и без входа — кнопка с облачками в плеере (клавиша C).</p>`;
+    shikiBox(view.querySelector("#shk"), () => { VIEWS.account(); shikiTab(); });
+  },
+
   library(tab = "watching") {
     const tabsDef = [...Object.entries(store.STATUSES), ["favorite", "Избранное"], ["history", "История"]];
     const s = store.stats();
     view.innerHTML = `<h1>Моё</h1><p class="muted">Просмотрено серий: ${s.episodes} · ${s.hours.toFixed(1)} ч</p>
-      <div class="shiki-box" id="shk"></div>
       <div class="tabs2">${tabsDef.map(([k, n]) => `<button class="chip${k === tab ? " on" : ""}" data-t="${k}">${n}</button>`).join("")}</div><div id="lb"></div>`;
     view.querySelector(".tabs2").onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { current.arg = b.dataset.t; VIEWS.library(b.dataset.t); } };
-    shikiBox(view.querySelector("#shk"), () => VIEWS.library(tab));
     const lb = view.querySelector("#lb");
     if (tab === "history") {
       const rows = store.history();

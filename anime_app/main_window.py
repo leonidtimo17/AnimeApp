@@ -99,6 +99,10 @@ class MainWindow(QMainWindow):
             self.nav_buttons[key] = btn
             side.addWidget(btn)
         side.addStretch(1)
+        # Вход через Shikimori — отдельной кнопкой внизу меню
+        from .shiki_ui import ShikimoriButton
+        side.addWidget(ShikimoriButton(ctx))
+        side.addSpacing(8)
         about = QLabel(f"v{APP_VERSION} · AniLibria · AnimeVost · AnimeLib · YummyAnime")
         about.setObjectName("Muted")
         about.setWordWrap(True)

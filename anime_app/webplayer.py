@@ -15,6 +15,19 @@ import urllib.request
 
 ANIMELIB_API = "https://api.cdnlibs.org/api"
 ANISKIP_API = "https://api.aniskip.com/v2/skip-times"
+# Блокировка рекламы: пока играет Kodik, пропускаем только серверы самого Kodik (плеер и видео).
+# Рекламные сети Kodik меняются постоянно (даже домены со случайными именами), поэтому — белый список.
+KODIK_HOSTS = ("kodikplayer.com", "kodik.info", "kodik.biz", "kodik.cc", "kodik.online", "kodikres.com",
+               "kodik-storage.com", "solodcdn.com")
+
+
+def kodik_allowed(url):
+    if url.startswith(("data:", "blob:", "about:")):
+        return True
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host in ("127.0.0.1", "localhost") or not host:   # сама страница плеера (pywebview)
+        return True
+    return any(host == h or host.endswith("." + h) for h in KODIK_HOSTS)
 HEADERS = {"User-Agent": "Mozilla/5.0 AnimeApp/1.0", "Site-Id": "5"}
 
 
@@ -73,6 +86,16 @@ class Bridge:
             res.setdefault("opening" if r.get("skipType") == "op" else "ending",
                            {"start": iv.get("startTime"), "stop": iv.get("endTime")})
         return res or None
+
+    def fullscreen(self):
+        emit(type="fullscreen")
+
+    def escape(self):
+        emit(type="escape")
+
+    def adblock_off(self):
+        """Видео не загрузилось с блокировкой — выключаем её до конца сеанса."""
+        self.job["adblock"] = False
 
     def tick(self, pos):
         emit(type="time", pos=pos)
@@ -135,7 +158,7 @@ padding:10px 20px;font-weight:700;font-size:16px;display:none}
 </style></head><body>
 <div id="stage">
   <div id="msg">Загрузка…</div>
-  <iframe id="frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
+  <iframe id="frame" allow="autoplay"></iframe>
   <div id="osd"></div>
   <div id="toast"><button id="stay">Смотреть титры</button><button id="go"></button></div>
 </div>
@@ -154,11 +177,12 @@ padding:10px 20px;font-weight:700;font-size:16px;display:none}
     <button id="skip" class="ctl" title="Пропустить заставку (S)"><i class="fa">&#xf04e;</i>&nbsp; Пропустить заставку</button>
     <button id="sleep" title="Таймер сна"><i class="fa">&#xf186;</i></button>
     <button id="zoom" title="Заполнить экран, без чёрных полос (Z)"><i class="fa">&#xf065;</i></button>
+    <button id="fs" title="Полный экран (F, двойной клик по панели)"><i class="fa">&#xf31e;</i></button>
   </div>
   <div id="menu"></div>
 </div>
 <script>
-let lastTickSent = 0;
+let lastTickSent = 0, adblockCheck = null;
 let job, idx = 0, pos = 0, dur = 0, lastSent = 0, seekTo = 0, timer = null, count = 0, playing = false, dragging = false;
 const $ = id => document.getElementById(id);
 const api = () => window.pywebview.api;
@@ -185,6 +209,12 @@ async function load(i, start){
   if (r.error) { $('msg').textContent = r.error; return; }
   if (r.fallback) osd('Выбранной озвучки для этой серии нет — включена другая: ' + (r.team || ''));
   $('frame').src = r.src; $('frame').style.visibility = 'visible'; $('msg').textContent = '';
+  clearTimeout(adblockCheck);
+  if (job.adblock) adblockCheck = setTimeout(() => {
+    if (dur || !job.adblock) return;
+    job.adblock = false; api().adblock_off();
+    osd('Видео не загрузилось без рекламы — включаем как есть'); load(idx, seekTo || pos);
+  }, 25000);
   api().current(i);
 }
 function stopCountdown(){ clearInterval(timer); timer = null; $('toast').style.display = 'none'; }
@@ -289,7 +319,14 @@ document.addEventListener('keydown', e => {
   else if (k === 'p' && idx > 0) load(idx - 1, null);
   else if (k === 's') skipOpening();
   else if (k === 'z') toggleZoom();
+  else if (k === 'f' || k === 'f11') { api().fullscreen(); e.preventDefault(); }
+  else if (k === 'escape') api().escape();
 });
+$('fs').onclick = () => api().fullscreen();
+$('panel').addEventListener('dblclick', e => { if (!e.target.closest('button, select, #seek')) api().fullscreen(); });
+// После клика по видео фокус уходит внутрь iframe Kodik, и клавиши туда не доходят — забираем фокус обратно
+window.addEventListener('blur', () => setTimeout(() => {
+  if (document.activeElement === $('frame')) { $('frame').blur(); window.focus(); } }, 0));
 // --- восстановление после обрыва сети (смена Wi-Fi/VPN): если видео должно идти, а время не обновляется — перезагружаем с того же места
 let lastTick = Date.now(), userPaused = false, started = false;
 setInterval(() => {
@@ -337,9 +374,49 @@ def run(job_path):
                 time.sleep(0.05)
         emit(type="error", message="Не удалось создать окно плеера")
 
+    def adblock():
+        """Белый список запросов для плеера Kodik (без рекламы и счётчиков)."""
+        from System import Action
+        from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext as Ctx
+        try:
+            from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceRequestSourceKinds as Kinds
+        except ImportError:
+            Kinds = None
+        form = window.native
+
+        def on_request(_sender, e):
+            if bridge.job.get("adblock") and not kodik_allowed(e.Request.Uri):
+                e.Response = form.webview.CoreWebView2.Environment.CreateWebResourceResponse(None, 403, "Blocked", "")
+
+        done = []
+
+        def setup():
+            # Всё обращение к WebView2 — только в потоке окна
+            core = form.webview.CoreWebView2
+            if core is None:
+                return
+            if Kinds is not None:
+                core.AddWebResourceRequestedFilter("*", Ctx.All, Kinds.All)   # и запросы изнутри iframe
+            else:
+                core.AddWebResourceRequestedFilter("*", Ctx.All)
+            core.WebResourceRequested += on_request
+            done.append(True)
+        import time
+        for _ in range(200):
+            try:
+                form.Invoke(Action(setup))
+            except Exception as exc:  # noqa: BLE001 — окно ещё создаётся
+                if sys.stderr:
+                    sys.stderr.write(f"adblock: {exc}\n")
+            if done:
+                return
+            time.sleep(0.05)
+
     def commands():
         """Команды из основного приложения (строки JSON в stdin): перемотка из обсуждения серии."""
         announce()
+        if job.get("adblock"):
+            adblock()
         for line in sys.stdin:
             try:
                 msg = json.loads(line)
@@ -350,6 +427,14 @@ def run(job_path):
                 window.evaluate_js(f"seek({t}); osd('Перемотка на ' + fmt({t}))")
 
     # Прогресс сохраняется каждые 5 с и на паузе, так что при закрытии теряется максимум 5 с.
-    webview.start(commands if sys.stdin else announce, gui="edgechromium", private_mode=False,
+    def start():
+        if sys.stdin:
+            commands()
+        else:
+            announce()
+            if job.get("adblock"):
+                adblock()
+
+    webview.start(start, gui="edgechromium", private_mode=False,
                   storage_path=os.path.join(os.path.dirname(job_path), "webview"))
     emit(type="closed")

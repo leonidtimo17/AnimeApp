@@ -305,6 +305,7 @@ class PlayerWindow(QWidget):
         self.pip = False
         self.normal_geometry = None
         self.drag_origin = None
+        self._last_mouse = None
 
         # --- медиа
         self.player = QMediaPlayer(self)
@@ -1044,9 +1045,12 @@ class PlayerWindow(QWidget):
         playing = state == QMediaPlayer.PlaybackState.PlayingState
         self._set_icon(self.play_btn, I_PAUSE if playing else I_PLAY)
         self._set_icon(self.fs_btn, I_UNFULL if self.window().isFullScreen() else I_FULL)
+        # Состояние меняется и само — при перезагрузке потока (смена качества, восстановление сети).
+        # Панель показываем только на паузе, а при воспроизведении лишь перезапускаем таймер скрытия.
         if playing:
-            self.poke()
-        else:
+            if self.bottom.isVisible():
+                self.hide_timer.start()
+        elif state == QMediaPlayer.PlaybackState.PausedState:
             self._show_controls()
             self.hide_timer.stop()
 
@@ -1340,7 +1344,12 @@ class PlayerWindow(QWidget):
                     self.drag_origin = (self.drag_origin[0], self.drag_origin[1], True)
                     self.move(self.drag_origin[1] + delta)
                     self.hold_timer.stop()
-            self.poke()
+            # Когда панель прячется, Qt присылает «движение мыши» без движения (виджеты под курсором сменились) —
+            # от него панель снова всплывала. Показываем её только если курсор правда сдвинулся.
+            p = e.globalPosition().toPoint()
+            if self._last_mouse is None or (p - self._last_mouse).manhattanLength() > 3:
+                self._last_mouse = p
+                self.poke()
         elif t == e.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
             if self.ep_list.isVisible():
                 self.ep_list.hide()

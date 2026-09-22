@@ -44,6 +44,13 @@ public class PlayerScreenPlugin extends Plugin {
         });
     }
 
+    /** adblock({on}) — блокировать рекламу, пока открыт плеер Kodik. */
+    @PluginMethod
+    public void adblock(PluginCall call) {
+        AdBlockWebViewClient.enabled = Boolean.TRUE.equals(call.getBoolean("on", false));
+        call.resolve();
+    }
+
     /** openUrl({url}) — открыть страницу в браузере телефона/планшета. */
     @PluginMethod
     public void openUrl(PluginCall call) {

@@ -33,6 +33,7 @@ class KodikPage(QWidget):
         self.container = None
         self.eps = []
         self.ep_key = None
+        self._launch = None
         self.pos = 0.0
         self.setStyleSheet("background:#000;")
 
@@ -76,6 +77,14 @@ class KodikPage(QWidget):
         self.cm_btn.setToolTip("Обсуждение серии на Shikimori")
         self.cm_btn.clicked.connect(self.toggle_comments)
         bl.addWidget(self.cm_btn)
+        self.ad_btn = QPushButton("  Без рекламы")
+        self.ad_btn.setObjectName("Flat")
+        self.ad_btn.setCheckable(True)
+        self.ad_btn.setChecked(ctx.db.setting("kodik_adblock", True))
+        self.ad_btn.setToolTip("Блокировать рекламу и счётчики в плеере Kodik (включится со следующей серии)")
+        self.ad_btn.toggled.connect(self._toggle_adblock)
+        self._paint_ad_btn()
+        bl.addWidget(self.ad_btn)
         bl.addWidget(self.fs_btn)
         lay.addWidget(self.bar)
 
@@ -119,6 +128,21 @@ class KodikPage(QWidget):
     def _episode(self):
         return next((e for e in self.eps if e["key"] == self.ep_key), self.eps[0] if self.eps else None)
 
+    def _paint_ad_btn(self):
+        on = self.ad_btn.isChecked()
+        self.ad_btn.setIcon(icon("check" if on else "xmark", "#3fbf6a" if on else TEXT, 14))
+
+    def _toggle_adblock(self, on):
+        self.ctx.db.set_setting("kodik_adblock", on)
+        self._paint_ad_btn()
+        # Перезапускаем плеер с того же места, чтобы настройка сразу подействовала
+        if self.release and self._launch:
+            release, dub, eps = self._launch
+            last = self.ctx.db.last_progress(release["id"])
+            key = self.ep_key or (last["episode_id"] if last else None)
+            pos = last["position"] if last and last["episode_id"] == key else None
+            self.open(release, dub, eps, key, position=pos)
+
     def toggle_comments(self):
         if self.comments.isVisible():
             self.comments.close_panel()
@@ -132,6 +156,7 @@ class KodikPage(QWidget):
 
     def open(self, release, dub, eps, key, position=None):
         self.stop()
+        self._launch = (release, dub, eps)
         self.release = release
         self.eps = eps
         self.ep_key = key
@@ -160,6 +185,7 @@ class KodikPage(QWidget):
                 "index": idx, "position": pos,
                 "sid": (release.get("shikimori") or {}).get("id"),
                 "autoskip": self.ctx.db.setting("autoskip_opening", False),
+                "adblock": self.ctx.db.setting("kodik_adblock", True),
                 "zoom_fill": self.ctx.db.setting("zoom_fill", False),
                 "sleep": {"until": SLEEP["until"] * 1000 if SLEEP["until"] > time.time() else 0,
                           "min": SLEEP["min"], "episode": SLEEP["episode"]},
@@ -189,6 +215,13 @@ class KodikPage(QWidget):
                 self._embed(msg["value"])
             elif kind == "progress" and self.release:
                 self.ctx.db.save_progress(self.release["id"], msg["key"], msg["ordinal"], msg["pos"], msg["dur"])
+            elif kind == "fullscreen":
+                self.toggle_fullscreen()
+            elif kind == "escape":
+                if self.window().isFullScreen():
+                    self.toggle_fullscreen()
+                else:
+                    self.close_player()
             elif kind == "time":
                 self.pos = msg.get("pos") or 0
             elif kind == "episode":
@@ -224,7 +257,10 @@ class KodikPage(QWidget):
             self.bar.show()
         else:
             win.showFullScreen()
+            self.bar.hide()   # на весь экран — только видео и его панель (Esc/F — выйти)
         self.fs_btn.setIcon(icon("compress" if win.isFullScreen() else "expand", TEXT, 16))
+        if self.container:
+            self.container.setFocus()
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_F11:

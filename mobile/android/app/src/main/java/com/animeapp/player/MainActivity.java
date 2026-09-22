@@ -9,5 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(PlayerScreenPlugin.class);
         super.onCreate(savedInstanceState);
+        // Свой обработчик запросов WebView: блокировка рекламы в плеере Kodik (остальное — как у Capacitor)
+        bridge.setWebViewClient(new AdBlockWebViewClient(bridge));
     }
 }
