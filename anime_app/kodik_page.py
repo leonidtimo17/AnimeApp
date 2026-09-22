@@ -8,11 +8,12 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import QProcess, QSize, Qt, Signal
+from PySide6.QtCore import QProcess, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QWindow
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
 
 from .api import release_title
+from .comments_panel import CommentsPanel
 from .icons import icon
 from .player import SLEEP, fill_dub_menu, fill_season_menu
 from .sources import resume_target
@@ -30,6 +31,9 @@ class KodikPage(QWidget):
         self.proc = None
         self.release = None
         self.container = None
+        self.eps = []
+        self.ep_key = None
+        self.pos = 0.0
         self.setStyleSheet("background:#000;")
 
         lay = QVBoxLayout(self)
@@ -65,6 +69,13 @@ class KodikPage(QWidget):
         self.fs_btn.setIconSize(QSize(16, 16))
         self.fs_btn.setToolTip("Полный экран (F11)")
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
+        self.cm_btn = QPushButton()
+        self.cm_btn.setObjectName("Flat")
+        self.cm_btn.setIcon(icon("comments", TEXT, 16))
+        self.cm_btn.setIconSize(QSize(16, 16))
+        self.cm_btn.setToolTip("Обсуждение серии на Shikimori")
+        self.cm_btn.clicked.connect(self.toggle_comments)
+        bl.addWidget(self.cm_btn)
         bl.addWidget(self.fs_btn)
         lay.addWidget(self.bar)
 
@@ -73,7 +84,20 @@ class KodikPage(QWidget):
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setStyleSheet("color:#9a9aa6;font-size:15px;")
         self.body.addWidget(self.status, 1)
-        lay.addLayout(self.body, 1)
+        row = QHBoxLayout()
+        row.setSpacing(0)
+        row.addLayout(self.body, 1)
+        # Обсуждение серии справа от видео (поверх окна WebView ничего не нарисовать)
+        self.comments = CommentsPanel(ctx, lambda: (self.release, self._episode(), self.pos))
+        self.comments.setFixedWidth(400)
+        self.comments.seek_requested.connect(self._seek)
+        self.comments.closed.connect(lambda: self.container and self.container.setFocus())
+        self.comments.hide()
+        row.addWidget(self.comments)
+        lay.addLayout(row, 1)
+        self.tick = QTimer(self, interval=1000)
+        self.tick.timeout.connect(self.comments.tick)
+        self.tick.start()
 
     # ------------------------------------------------------------ запуск
     def set_dubs(self, dubs, current_id):
@@ -92,9 +116,25 @@ class KodikPage(QWidget):
         last = self.ctx.db.last_progress(self.release["id"])
         return (last["episode_id"], last["position"]) if last else (None, 0)
 
+    def _episode(self):
+        return next((e for e in self.eps if e["key"] == self.ep_key), self.eps[0] if self.eps else None)
+
+    def toggle_comments(self):
+        if self.comments.isVisible():
+            self.comments.close_panel()
+        else:
+            self.comments.open_panel()
+
+    def _seek(self, sec):
+        """Перемотать видео в процессе веб-плеера (команда через stdin)."""
+        if self.proc:
+            self.proc.write((json.dumps({"cmd": "seek", "t": sec}) + "\n").encode())
+
     def open(self, release, dub, eps, key, position=None):
         self.stop()
         self.release = release
+        self.eps = eps
+        self.ep_key = key
         self.title.setText(release_title(release))
         self.status.setText("Запускаем плеер…")
         self.status.show()
@@ -149,6 +189,11 @@ class KodikPage(QWidget):
                 self._embed(msg["value"])
             elif kind == "progress" and self.release:
                 self.ctx.db.save_progress(self.release["id"], msg["key"], msg["ordinal"], msg["pos"], msg["dur"])
+            elif kind == "time":
+                self.pos = msg.get("pos") or 0
+            elif kind == "episode":
+                self.ep_key = msg.get("key")
+                self.comments.episode_changed()
             elif kind == "error":
                 self.status.setText(msg.get("message", "Ошибка плеера"))
             elif kind == "setting" and msg.get("key") in ("zoom_fill",):

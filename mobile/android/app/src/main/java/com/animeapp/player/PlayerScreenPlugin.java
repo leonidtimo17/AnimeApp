@@ -1,6 +1,8 @@
 package com.animeapp.player;
 
 import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.view.Window;
 import android.view.WindowManager;
 
@@ -15,7 +17,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
  * Экран во время просмотра: полноэкранный режим без строки состояния и навигации,
- * экран не гаснет.
+ * экран не гаснет; открытие ссылок во внешнем браузере (вход через Shikimori).
  * (Полноэкранный режим из веба в Capacitor не работает — он его сразу отменяет.)
  */
 @CapacitorPlugin(name = "PlayerScreen")
@@ -40,5 +42,19 @@ public class PlayerScreenPlugin extends Plugin {
             }
             call.resolve();
         });
+    }
+
+    /** openUrl({url}) — открыть страницу в браузере телефона/планшета. */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            call.reject("Неверная ссылка");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getActivity().startActivity(intent);
+        call.resolve();
     }
 }

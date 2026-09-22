@@ -74,6 +74,9 @@ class Bridge:
                            {"start": iv.get("startTime"), "stop": iv.get("endTime")})
         return res or None
 
+    def tick(self, pos):
+        emit(type="time", pos=pos)
+
     def setting(self, key, value):
         emit(type="setting", key=key, value=value)
 
@@ -155,6 +158,7 @@ padding:10px 20px;font-weight:700;font-size:16px;display:none}
   <div id="menu"></div>
 </div>
 <script>
+let lastTickSent = 0;
 let job, idx = 0, pos = 0, dur = 0, lastSent = 0, seekTo = 0, timer = null, count = 0, playing = false, dragging = false;
 const $ = id => document.getElementById(id);
 const api = () => window.pywebview.api;
@@ -200,7 +204,7 @@ window.addEventListener('message', e => {
       if (!(ep.ending && ep.ending.start) && s.ending) ep.ending = s.ending;
     });
     if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({method:'seek', seconds:s}); osd('Продолжаем с ' + fmt(s)); }, 600); } }
-  else if (d.key === 'kodik_player_time_update') { pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
+  else if (d.key === 'kodik_player_time_update') { if (Date.now() - lastTickSent > 1000) { lastTickSent = Date.now(); api().tick(d.value); } pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
     const ep = job.episodes[idx], op = ep.opening;
     if (ep.ending && ep.ending.start ? pos >= ep.ending.start : dur > 300 && dur - pos < 40) countdown();
     if (job.autoskip && op && op.stop && op.start != null && pos >= op.start && pos < op.stop - 2 && !ep._skipped) {
@@ -333,7 +337,19 @@ def run(job_path):
                 time.sleep(0.05)
         emit(type="error", message="Не удалось создать окно плеера")
 
+    def commands():
+        """Команды из основного приложения (строки JSON в stdin): перемотка из обсуждения серии."""
+        announce()
+        for line in sys.stdin:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if msg.get("cmd") == "seek":
+                t = int(msg.get("t") or 0)
+                window.evaluate_js(f"seek({t}); osd('Перемотка на ' + fmt({t}))")
+
     # Прогресс сохраняется каждые 5 с и на паузе, так что при закрытии теряется максимум 5 с.
-    webview.start(announce, gui="edgechromium", private_mode=False,
+    webview.start(commands if sys.stdin else announce, gui="edgechromium", private_mode=False,
                   storage_path=os.path.join(os.path.dirname(job_path), "webview"))
     emit(type="closed")

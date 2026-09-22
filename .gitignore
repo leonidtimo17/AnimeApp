@@ -19,3 +19,6 @@ mobile/android/app/src/main/assets/public/
 *.log
 .DS_Store
 keystore.properties
+# Ключи OAuth Shikimori
+mobile/www/js/shiki_config.js
+anime_app/shiki_config.py

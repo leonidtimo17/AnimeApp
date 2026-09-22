@@ -35,6 +35,7 @@ export function remember(rel, extra = {}) {
   save();
 }
 export const anime = (id) => state.anime[id];
+export const animeAll = () => state.anime;
 
 // ------------------------------------------------------------------ списки
 export function entry(id) {
@@ -46,9 +47,16 @@ function setEntry(id, patch) {
   else state.library[id] = e;
   save();
 }
-export const setStatus = (id, status) => setEntry(id, { status });
+// Подписчики на изменения списка и прогресса (связь с Shikimori). fn(kind, id): kind — "status" | "score" | "episode"
+const listeners = [];
+export const onChange = (fn) => listeners.push(fn);
+const notify = (kind, id) => listeners.forEach((fn) => { try { fn(kind, id); } catch { /* не мешаем сохранению */ } });
+
+export const setStatus = (id, status) => { setEntry(id, { status }); notify("status", id); };
 export const setFavorite = (id, favorite) => setEntry(id, { favorite });
-export const setScore = (id, score) => setEntry(id, { score });
+export const setScore = (id, score) => { setEntry(id, { score }); notify("score", id); };
+/** Без отправки на Shikimori — для загрузки списка оттуда. */
+export const setEntryQuiet = (id, patch) => setEntry(id, patch);
 
 export function library(status) {
   return Object.entries(state.library)
@@ -60,6 +68,7 @@ export const libraryIds = () => Object.keys(state.library).map(Number);
 
 // ------------------------------------------------------------------ прогресс (ключ серии — её номер)
 export function progress(id) { return state.progress[id] || {}; }
+export const progressAll = () => state.progress;
 
 export function saveProgress(id, key, ordinal, pos, dur, endingStart) {
   if (!dur || dur < 30) return false;
@@ -69,6 +78,7 @@ export function saveProgress(id, key, ordinal, pos, dur, endingStart) {
   const watched = prev.watched || (endingStart && pos >= endingStart) || tail <= Math.min(180, dur * 0.1);
   p[key] = { pos, dur, ordinal, watched: !!watched, t: Date.now() };
   save();
+  if (watched && !prev.watched) notify("episode", id);
   return !!watched && !prev.watched;
 }
 
@@ -76,6 +86,7 @@ export function setWatched(id, key, ordinal, watched) {
   const p = (state.progress[id] ||= {});
   p[key] = { ...(p[key] || { pos: 0, dur: 0 }), ordinal, watched, pos: watched ? (p[key]?.pos || 0) : 0, t: Date.now() };
   save();
+  notify("episode", id);
 }
 
 export function lastProgress(id) {

@@ -2,6 +2,7 @@
 import * as api from "./api.js";
 import * as player from "./player.js";
 import { qualityName } from "./player.js";
+import * as shiki from "./shiki.js";
 import * as src from "./sources.js";
 import * as store from "./store.js";
 import * as taste from "./taste.js";
@@ -52,6 +53,64 @@ document.addEventListener("keydown", (e) => {
     setTimeout(() => view.querySelector("#q")?.focus(), 50);
   }
 });
+
+// ------------------------------------------------------------------ Shikimori: вход, статистика, список
+async function shikiBox(el, refresh) {
+  const cfg = await shiki.config();
+  const u = shiki.user();
+  if (!cfg) {
+    el.innerHTML = `<b>${fa("link")} Shikimori</b><p class="muted">Вход через Shikimori не настроен в этой сборке приложения.</p>`;
+    return;
+  }
+  if (!u) {
+    el.innerHTML = `<b>${fa("link")} Shikimori</b>
+      <p class="muted">Войдите, и приложение будет отмечать просмотренные серии, статусы и оценки в вашем списке на Shikimori —
+        там строится ваша статистика. А в плеере можно обсуждать серии.</p>
+      <div class="shk-row"><button class="btn" id="shOpen">1. Открыть страницу входа</button>
+        <input class="input" id="shCode" placeholder="2. Вставьте код с Shikimori" autocomplete="off">
+        <button class="btn primary" id="shLogin">Войти</button></div>`;
+    el.querySelector("#shOpen").onclick = async () => {
+      const url = await shiki.authorizeUrl();
+      const P = window.Capacitor?.Plugins?.PlayerScreen;
+      if (P?.openUrl) P.openUrl({ url }).catch(() => window.open(url, "_blank"));
+      else window.open(url, "_blank");
+      toast("Разрешите доступ на Shikimori, скопируйте код и вставьте его сюда", 4000);
+    };
+    el.querySelector("#shLogin").onclick = async () => {
+      const code = el.querySelector("#shCode").value.trim();
+      if (!code) return toast("Сначала вставьте код со страницы Shikimori");
+      try {
+        const me = await shiki.login(code);
+        toast(`Вы вошли как ${me.nickname}`);
+        refresh();
+      } catch (e) { toast(`Не удалось войти: ${e.message}. Попробуйте получить код ещё раз.`, 4000); }
+    };
+    return;
+  }
+  const on = store.setting("shikiSync", true);
+  el.innerHTML = `<div class="shk-row"><img class="shk-av" src="${esc(u.avatar || "")}" alt="">
+      <div style="flex:1;min-width:0"><b>${esc(u.nickname)}</b><div class="muted">Shikimori подключён</div></div>
+      <button class="chip${on ? " on" : ""}" id="shSync">${on ? fa("check") + " " : ""}Отправлять прогресс</button></div>
+    <div class="shk-row"><button class="btn small" id="shPush">Отправить весь список</button>
+      <button class="btn small" id="shPull">Загрузить список с Shikimori</button>
+      <button class="btn small" id="shOut">Выйти</button></div>`;
+  el.querySelector("#shSync").onclick = () => { store.setSetting("shikiSync", !on); refresh(); };
+  el.querySelector("#shOut").onclick = () => { shiki.logout(); toast("Вы вышли из Shikimori"); refresh(); };
+  el.querySelector("#shPush").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true;
+    try {
+      const n = await shiki.pushAll((i, t) => (b.textContent = `Отправляем… ${i} из ${t}`));
+      toast(`Отправлено на Shikimori: ${n}`);
+    } catch (e) { toast(`Ошибка: ${e.message}`); }
+    b.disabled = false; b.textContent = "Отправить весь список";
+  };
+  el.querySelector("#shPull").onclick = async (ev) => {
+    ev.currentTarget.disabled = true;
+    try { toast(`Загружено с Shikimori: ${await shiki.importList(src.shikiItem)}`); refresh(); }
+    catch (e) { toast(`Ошибка: ${e.message}`); ev.currentTarget.disabled = false; }
+  };
+}
 
 const openAnime = (item) => {
   if (item.release) store.remember(item.release, { poster: item.poster, subtitle: item.subtitle });
@@ -197,8 +256,10 @@ const VIEWS = {
     const tabsDef = [...Object.entries(store.STATUSES), ["favorite", "Избранное"], ["history", "История"]];
     const s = store.stats();
     view.innerHTML = `<h1>Моё</h1><p class="muted">Просмотрено серий: ${s.episodes} · ${s.hours.toFixed(1)} ч</p>
+      <div class="shiki-box" id="shk"></div>
       <div class="tabs2">${tabsDef.map(([k, n]) => `<button class="chip${k === tab ? " on" : ""}" data-t="${k}">${n}</button>`).join("")}</div><div id="lb"></div>`;
     view.querySelector(".tabs2").onclick = (e) => { const b = e.target.closest("[data-t]"); if (b) { current.arg = b.dataset.t; VIEWS.library(b.dataset.t); } };
+    shikiBox(view.querySelector("#shk"), () => VIEWS.library(tab));
     const lb = view.querySelector("#lb");
     if (tab === "history") {
       const rows = store.history();

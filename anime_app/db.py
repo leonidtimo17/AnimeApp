@@ -17,6 +17,9 @@ WATCHED_TAIL_MS = 180_000
 
 class Database:
     def __init__(self, path):
+        # Подписчики на изменения списка и прогресса (связь с Shikimori): fn(kind, anime_id),
+        # kind — "status" | "score" | "episode"
+        self.listeners = []
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -117,14 +120,27 @@ class Database:
         )
         self.conn.commit()
 
+    def _notify(self, kind, anime_id):
+        for fn in list(self.listeners):
+            try:
+                fn(kind, anime_id)
+            except Exception:  # noqa: BLE001 — сбой подписчика не должен мешать сохранению
+                pass
+
     def set_status(self, anime_id, status):
         self._upsert_library(anime_id, status=status)
+        self._notify("status", anime_id)
 
     def set_favorite(self, anime_id, favorite: bool):
         self._upsert_library(anime_id, favorite=int(favorite))
 
     def set_score(self, anime_id, score):
         self._upsert_library(anime_id, score=score)
+        self._notify("score", anime_id)
+
+    def set_entry_quiet(self, anime_id, status, score):
+        """Без отправки на Shikimori — для загрузки списка оттуда."""
+        self._upsert_library(anime_id, status=status, score=score)
 
     def library(self, status=None, favorites=False):
         sql = """SELECT a.*, l.status, l.favorite, l.score, l.updated_at AS lib_updated
@@ -154,7 +170,8 @@ class Database:
         prev = self.conn.execute(
             "SELECT watched FROM progress WHERE anime_id=? AND episode_id=?", (anime_id, episode_id)
         ).fetchone()
-        watched = int(bool(watched) or bool(prev and prev["watched"]))
+        was = bool(prev and prev["watched"])
+        watched = int(bool(watched) or was)
         self.conn.execute(
             """INSERT INTO progress (anime_id, episode_id, ordinal, position, duration, watched, updated_at)
                VALUES (?,?,?,?,?,?,?)
@@ -163,6 +180,8 @@ class Database:
             (anime_id, episode_id, ordinal, int(position), int(duration), watched, time.time()),
         )
         self.conn.commit()
+        if watched and not was:
+            self._notify("episode", anime_id)
         return bool(watched)
 
     def set_watched(self, anime_id, episode_id, ordinal, watched: bool, duration=0):
@@ -174,6 +193,12 @@ class Database:
             (anime_id, episode_id, ordinal, int(duration or 0), int(watched), time.time()),
         )
         self.conn.commit()
+        self._notify("episode", anime_id)
+
+    def tracked_ids(self):
+        """Все тайтлы из списков и истории просмотра."""
+        rows = self.conn.execute("SELECT anime_id FROM library UNION SELECT DISTINCT anime_id FROM progress")
+        return [r[0] for r in rows]
 
     def progress_for(self, anime_id):
         rows = self.conn.execute("SELECT * FROM progress WHERE anime_id=?", (anime_id,))

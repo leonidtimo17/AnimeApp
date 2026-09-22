@@ -57,14 +57,14 @@ export function clearCache() {
 
 /**
  * request(url, {params, headers, form, json, ttl, raw, timeout})
- * form — POST x-www-form-urlencoded, json — POST JSON. ttl — секунды свежести кэша.
+ * form — POST x-www-form-urlencoded, json — POST JSON (method — другой метод, например PATCH). ttl — секунды свежести кэша.
  * Без сети отдаёт последний сохранённый ответ.
  */
 export async function request(url, opts = {}) {
   const query = qs(opts.params);
   const full = query ? `${url}${url.includes("?") ? "&" : "?"}${query}` : url;
   const key = full + (opts.form ? "|" + JSON.stringify(opts.form) : "");
-  const cacheable = !opts.json;
+  const cacheable = !opts.json && !opts.method && !opts.headers?.Authorization;
   if (cacheable && opts.ttl) {
     const hit = cacheGet(key, opts.ttl);
     if (hit !== null) return hit;
@@ -81,6 +81,7 @@ export async function request(url, opts = {}) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.json);
   }
+  if (opts.method) method = opts.method;
   try {
     let data;
     if (Native) {

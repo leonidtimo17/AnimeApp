@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from .api import episode_label, fmt_ordinal, release_title
 from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
+from .comments_panel import CommentsPanel
 from .sources import resume_target
 from .icons import icon as fa_icon
 from .images import episode_thumb
@@ -407,6 +408,7 @@ class PlayerWindow(QWidget):
         titles.addWidget(self.title_lbl)
         titles.addWidget(self.sub_lbl)
         tl.addLayout(titles, 1)
+        self._btn("comments", "Обсуждение серии на Shikimori (C)", self.toggle_comments, tl)
 
         # Нижняя панель
         self.bottom = QFrame(self.view)
@@ -497,6 +499,13 @@ class PlayerWindow(QWidget):
         self.ep_list.itemClicked.connect(lambda it: self.play_index(it.data(Qt.ItemDataRole.UserRole)))
         self.ep_list.hide()
 
+        # Обсуждение серии (комментарии Shikimori)
+        self.comments = CommentsPanel(self.ctx, lambda: (self.release, self.current_episode(),
+                                                          self.player.position() / 1000), self.view)
+        self.comments.seek_requested.connect(lambda s: (self.seek_to(s * 1000), self.show_osd(f"Перемотка на {fmt_ms(s * 1000)}")))
+        self.comments.closed.connect(lambda: (self._layout_overlay(), self.setFocus()))
+        self.comments.hide()
+
         # Экранные подсказки
         self.osd = QLabel(self.view)
         self.osd.setObjectName("Osd")
@@ -579,8 +588,11 @@ class PlayerWindow(QWidget):
             widget.setVisible(not compact)
         panel_w = min(360, int(w * 0.4))
         self.ep_list.setGeometry(w - panel_w, 0, panel_w, h)
+        comments_w = min(430, int(w * 0.45))
+        self.comments.setGeometry(w - comments_w, 0, comments_w, h)
         margin_bottom = bh + 16 if self.bottom.isVisible() else 40
-        right = w - (panel_w if self.ep_list.isVisible() else 0) - 32
+        side = max(panel_w if self.ep_list.isVisible() else 0, comments_w if self.comments.isVisible() else 0)
+        right = w - side - 32
         self.skip_btn.adjustSize()
         self.skip_btn.move(right - self.skip_btn.width(), h - self.skip_btn.height() - margin_bottom)
         self.next_box.adjustSize()
@@ -722,6 +734,7 @@ class PlayerWindow(QWidget):
         self.prev_btn.setEnabled(idx > 0)
         self.next_btn.setEnabled(idx < len(self.episodes) - 1)
         self._update_marks()
+        self.comments.episode_changed()
         self._load_source(position)
         if position and position > 15_000:
             self.show_osd(f"Продолжаем с {fmt_ms(position)}", 2200)
@@ -1194,7 +1207,7 @@ class PlayerWindow(QWidget):
 
     def _hide_controls(self):
         over_controls = any(w.isVisible() and w.geometry().contains(self.view.mapFromGlobal(QCursor.pos()))
-                            for w in (self.bottom, self.top, self.ep_list))
+                            for w in (self.bottom, self.top, self.ep_list, self.comments))
         if over_controls or any(m.isVisible() for m in self.findChildren(QMenu)):
             self.hide_timer.start()
             return
@@ -1211,7 +1224,16 @@ class PlayerWindow(QWidget):
         self.fill_action.setChecked(fill)
         self.show_osd("Заполнить экран" if fill else "Весь кадр")
 
+    def toggle_comments(self):
+        if self.comments.isVisible():
+            self.comments.close_panel()
+            return
+        self.ep_list.hide()
+        self.comments.open_panel()
+        self._layout_overlay()
+
     def _sleep_tick(self):
+        self.comments.tick()
         on = sleep_active()
         if self.sleep_btn.property("on") != on:
             self.sleep_btn.setProperty("on", on)
@@ -1303,7 +1325,7 @@ class PlayerWindow(QWidget):
         self.show_osd(
             "Пробел/K — пауза   ←/→ — 10 с   ↑/↓ — громкость\n"
             "F — полный экран   M — звук   N/P — серии   S — пропустить заставку\n"
-            "[ / ] — скорость   E — серии   I — мини-плеер   Z — заполнить экран   0–9 — перейти в %\n"
+            "[ / ] — скорость   E — серии   C — обсуждение   I — мини-плеер   Z — заполнить экран   0–9 — перейти в %\n"
             "Зажать кнопку мыши на видео — скорость 2x",
             6000,
         )
@@ -1371,6 +1393,8 @@ class PlayerWindow(QWidget):
             self.toggle_pip()
         elif k == K.Key_Z:
             self.toggle_fill()
+        elif k == K.Key_C:
+            self.toggle_comments()
         elif k == K.Key_BracketRight:
             self.change_speed(1)
         elif k == K.Key_BracketLeft:
@@ -1378,7 +1402,9 @@ class PlayerWindow(QWidget):
         elif K.Key_0 <= k <= K.Key_9 and self.player.duration():
             self.seek_to(self.player.duration() * (k - K.Key_0) // 10)
         elif k == K.Key_Escape:
-            if self.ep_list.isVisible():
+            if self.comments.isVisible():
+                self.comments.close_panel()
+            elif self.ep_list.isVisible():
                 self.ep_list.hide()
             elif self.window().isFullScreen() and not self.pip:
                 self.toggle_fullscreen()

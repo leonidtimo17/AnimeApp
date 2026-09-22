@@ -38,7 +38,7 @@ class Api(QObject):
 
     # ------------------------------------------------------------------ core
     def fetch(self, url, params=None, on_ok=None, on_err=None, headers=None, form=None, retry=None,
-              json_body=None, timeout=20000, raw=False, cache_ttl=0):
+              json_body=None, timeout=20000, raw=False, cache_ttl=0, method=None):
         """Универсальный асинхронный запрос: GET, POST-форма (form) или POST JSON (json_body).
         raw=True — вернуть текст ответа, а не разобранный JSON.
         cache_ttl — сколько секунд ответ считается свежим (кэш в SQLite). Без интернета
@@ -57,7 +57,7 @@ class Api(QObject):
             qurl.setQuery(query)
 
         cache_key = None
-        if self.cache and json_body is None:
+        if self.cache and json_body is None and method is None and "Authorization" not in (headers or {}):
             cache_key = qurl.toString() + ("|" + json.dumps(form, sort_keys=True, ensure_ascii=False) if form else "")
             hit = self.cache.http_get(cache_key, cache_ttl) if cache_ttl else None
             if hit is not None:
@@ -76,7 +76,11 @@ class Api(QObject):
         for k, v in (headers or {}).items():
             req.setRawHeader(k.encode(), v.encode())
         req.setTransferTimeout(timeout)
-        if json_body is not None:
+        if method:  # PATCH/PUT/DELETE — например, изменить запись в списке Shikimori
+            req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+            body = json.dumps(json_body, ensure_ascii=False).encode("utf-8") if json_body is not None else b""
+            reply = self.nam.sendCustomRequest(req, method.encode(), body)
+        elif json_body is not None:
             req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
             reply = self.nam.post(req, json.dumps(json_body, ensure_ascii=False).encode("utf-8"))
         elif form is not None:
@@ -106,7 +110,7 @@ class Api(QObject):
                     except ValueError:
                         pass
                 if on_err:
-                    on_err(reply.errorString())
+                    on_err(f"HTTP {http_status}: {reply.errorString()}" if http_status else reply.errorString())
                 return
             try:
                 text = bytes(reply.readAll()).decode("utf-8", "replace")

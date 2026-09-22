@@ -20,6 +20,8 @@ class AppContext(QObject):
         if api.cache is None:
             api.cache = db
             db.http_prune()
+        from .shikimori import Shikimori
+        self.shiki = Shikimori(api, db, self)   # вход, статистика и обсуждения на Shikimori
 
     def load_release(self, release_id, on_ok, on_err=None, fresh=False):
         """Карточка тайтла: AniLibria или AnimeLib (для тайтлов, которых нет на AniLibria)."""

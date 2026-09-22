@@ -2,6 +2,7 @@
 import * as store from "./store.js";
 import * as src from "./sources.js";
 import { I, episodeRow, esc, fa, fmtTime, sheet, toast } from "./ui.js";
+import { commentsPanel } from "./comments.js";
 
 /** HTML списка серий для боковой панели плеера. */
 function episodeList(opts, idx) {
@@ -66,14 +67,14 @@ const HIDE_MS = 5000;  // через сколько бездействия пр�
  */
 const HOTKEYS_HELP = "Пробел/K — пауза   ←/→ — 10 с (Shift — 30 с)   ↑/↓ — громкость   M — звук\n"
   + "N/P — следующая/предыдущая серия   S — пропустить заставку   E — список серий\n"
-  + "F или Z — масштаб   T — таймер сна   [ / ] — скорость   0–9 — перейти в %   Esc — закрыть";
+  + "F или Z — масштаб   T — таймер сна   C — обсуждение   [ / ] — скорость   0–9 — перейти в %   Esc — закрыть";
 function hotkeys(root, extra) {
   const click = (a) => {
     const b = root.querySelector(`[data-a="${a}"]`);
     if (b && !b.disabled && !b.hidden) b.click();
     document.activeElement?.blur?.();  // иначе пробел ещё раз «нажмёт» кнопку в фокусе
   };
-  const list = () => root.querySelector(".pl-list:not([hidden])");
+  const list = () => root.querySelector(".pl-list:not([hidden]), .pl-comments:not([hidden])");
   const onKey = (e) => {
     if (e.target.closest?.("input, textarea, select") || e.ctrlKey || e.altKey || e.metaKey) return;
     if (!document.getElementById("sheet").hidden) return;  // открыто меню — Esc закроет его приложение
@@ -97,6 +98,7 @@ function hotkeys(root, extra) {
     else if (code === "KeyE") click(root.querySelector("[data-a=list]") ? "list" : "eps");
     else if (code === "KeyF" || code === "KeyZ") click("fs");
     else if (code === "KeyT") click("sleep");
+    else if (code === "KeyC") click("comments");
     else if (code === "BracketRight" && extra.speed) extra.speed(1);
     else if (code === "BracketLeft" && extra.speed) extra.speed(-1);
     else if (/^(Digit|Numpad)\d$/.test(code)) extra.percent(+code.slice(-1) / 10);
@@ -289,6 +291,7 @@ function nativePlayer(root, opts) {
     <div class="pl-top">
       <button class="pl-btn" data-a="back">${fa("back")}</button>
       <div class="ttl"><b>${esc(src.title(rel))}</b><small class="sub"></small></div>
+      <button class="pl-btn" data-a="comments" title="Обсуждение серии">${fa("comments")}</button>
       <button class="pl-btn" data-a="list">${fa("list")}</button>
     </div>
     <div class="pl-center">
@@ -317,6 +320,8 @@ function nativePlayer(root, opts) {
   const video = $("video");
   const m = menus(opts, () => [eps[idx].key, video.currentTime]);
   const wasSwipe = swipeToClose(root, video);  // тянуть видео вниз — закрыть плеер
+  const cp = commentsPanel(root, { rel, ep: () => eps[idx], time: () => video.currentTime,
+    seek: (s) => { video.currentTime = s; }, osd: (t) => osd(t) });
 
   const ep = () => eps[idx];
   // Только качества, которые реально есть у серии, от лучшего к худшему
@@ -351,7 +356,7 @@ function nativePlayer(root, opts) {
   // Управление видно HIDE_MS после последнего касания; на паузе, при перемотке и в меню — не прячем
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
   const tryHide = () => {
-    if (video.paused || dragging || !$(".pl-list").hidden || !document.getElementById("sheet").hidden) return poke();
+    if (video.paused || dragging || !$(".pl-list").hidden || cp.isOpen() || !document.getElementById("sheet").hidden) return poke();
     root.classList.add("pl-hidden");
   };
   const hideNow = () => { clearTimeout(hideTimer); root.classList.add("pl-hidden"); };
@@ -370,6 +375,7 @@ function nativePlayer(root, opts) {
   async function load(pos) {
     const e = ep();
     $(".sub").textContent = `${src.fmtOrd(e.ordinal)} серия · ${idx + 1} из ${eps.length} · ${opts.dub.name}`;
+    cp.episodeChanged();
     $("[data-a=prev]").disabled = idx === 0;
     $("[data-a=next]").disabled = idx >= eps.length - 1;
     openingSkipped = false; nextCancelled = false; badQ = new Set();
@@ -682,6 +688,7 @@ function nativePlayer(root, opts) {
     else if (a === "skip") skipOpening();
     else if (a === "stay") { nextCancelled = true; clearInterval(countTimer); $(".pl-pill").innerHTML = ""; $(".pl-pill").dataset.mode = ""; }
     else if (a === "list") { $(".pl-list").hidden = !$(".pl-list").hidden; renderList(); }
+    else if (a === "comments") cp.toggle();
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
     else if (a === "sleep") sleepMenu(osd);
@@ -757,7 +764,7 @@ function nativePlayer(root, opts) {
   return {
     destroy() {
       save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog); clearInterval(sleepTimer);
-      unbindKeys();
+      unbindKeys(); cp.destroy();
       clearInterval(upgradeTimer); if (masterUrl) URL.revokeObjectURL(masterUrl);
       window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
       if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load();
@@ -782,6 +789,7 @@ function kodikPlayer(root, opts) {
       <div class="ttl"><b>${esc(src.title(rel))}</b><small class="sub"></small></div>
       <button class="pl-btn" data-a="seasons" ${opts.seasons?.length ? "" : "hidden"}>${fa("layers")}</button>
       <button class="pl-btn txt" data-a="dub">${fa("mic")} ${esc(opts.dub.name)}</button>
+      <button class="pl-btn" data-a="comments" title="Обсуждение серии">${fa("comments")}</button>
     </div>
     <iframe class="kodik" allow="autoplay; fullscreen" allowfullscreen></iframe>
     <div class="spinner"></div>
@@ -812,10 +820,11 @@ function kodikPlayer(root, opts) {
   const cmd = (v) => frame.contentWindow?.postMessage({ key: "kodik_player_api", value: v }, "*");
   const osd = (t, ms = 1000) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), ms); };
   const setAd = (on) => { root.classList.toggle("k-ad", on); if (on) poke(); };
+  const cp = commentsPanel(root, { rel, ep: () => eps[idx], time: () => pos, seek: (s) => seek(s), osd: (t) => osd(t) });
   let hideTimer = null;
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
   const tryHide = () => {
-    if (!playing || dragging || root.classList.contains("k-ad") || !$(".kplist").hidden
+    if (!playing || dragging || root.classList.contains("k-ad") || !$(".kplist").hidden || cp.isOpen()
       || !document.getElementById("sheet").hidden) return poke();
     root.classList.add("pl-hidden");
   };
@@ -861,6 +870,7 @@ function kodikPlayer(root, opts) {
     render();
     const e = eps[i];
     $("[data-a=eps]").textContent = `${src.fmtOrd(e.ordinal)} серия`;
+    cp.episodeChanged();
     $("[data-a=prev]").disabled = i === 0;
     $("[data-a=next]").disabled = i >= eps.length - 1;
     $(".spinner").hidden = false;
@@ -964,6 +974,7 @@ function kodikPlayer(root, opts) {
     else if (a === "seasons") m.seasons();
     else if (a === "fs") { const fill = !root.classList.contains("zoom-fill"); zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); }
     else if (a === "sleep") sleepMenu(osd);
+    else if (a === "comments") cp.toggle();
   };
   $(".kplist").addEventListener("click", (ev) => {
     const it = ev.target.closest("[data-i]");
@@ -996,7 +1007,7 @@ function kodikPlayer(root, opts) {
   poke();
   return { destroy() {
     save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); clearInterval(sleepTimer);
-    unbindKeys(); window.removeEventListener("blur", onBlur);
+    unbindKeys(); cp.destroy(); window.removeEventListener("blur", onBlur);
     window.removeEventListener("message", onMsg);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
