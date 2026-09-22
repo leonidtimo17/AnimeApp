@@ -59,7 +59,13 @@ document.addEventListener("keydown", (e) => {
 function shikiTab() {
   const u = shiki.user();
   const b = document.getElementById("tabShiki");
-  if (b) b.querySelector("span").textContent = u ? u.nickname : "Shikimori";
+  if (!b) return;
+  b.querySelector("span").textContent = u ? u.nickname : "Shikimori";
+  // Вошли — вместо значка аватар
+  const old = b.querySelector(".fa, .tab-av");
+  const icon = u?.avatar ? Object.assign(document.createElement("img"), { className: "tab-av", src: u.avatar, alt: "" })
+    : Object.assign(document.createElement("i"), { className: "fa", innerHTML: I.link });
+  old.replaceWith(icon);
 }
 shikiTab();
 async function shikiBox(el, refresh) {

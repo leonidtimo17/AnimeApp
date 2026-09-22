@@ -222,3 +222,8 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
   border-radius: 10px; padding: 10px; font: inherit; box-sizing: border-box; }
 .cfr { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 13px; }
 .cfr .sp { flex: 1; }
+
+/* Вкладка Shikimori: аватар и ник (длинный ник обрезается) */
+#tabs button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; box-sizing: border-box; }
+#tabs .tab-av { width: 21px; height: 21px; border-radius: 50%; object-fit: cover; display: block; margin: 0 auto 1px; }
+#tabs button { min-width: 0; }

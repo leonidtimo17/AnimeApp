@@ -29,6 +29,13 @@ QPushButton#NavButton {{
 }}
 QPushButton#NavButton:hover {{ background: {SURFACE_2}; color: {TEXT}; }}
 QPushButton#NavButton:checked {{ background: {SURFACE_2}; color: {TEXT}; font-weight: 600; }}
+/* Кнопка Shikimori внизу меню */
+QPushButton#ShikiButton {{
+    text-align: left; padding: 10px 12px; margin: 2px 10px; border: 1px solid {BORDER}; border-radius: 10px;
+    background: {SURFACE_2}; color: {TEXT}; font-size: 14px; font-weight: 600;
+}}
+QPushButton#ShikiButton:hover {{ border-color: {ACCENT}; }}
+QPushButton#ShikiButton[logged="true"] {{ background: transparent; }}
 
 QLabel#H1 {{ font-size: 30px; font-weight: 800; }}
 QLabel#H2 {{ font-size: 20px; font-weight: 700; }}

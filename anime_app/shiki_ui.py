@@ -1,29 +1,58 @@
 """Кнопка «Войти через Shikimori» внизу бокового меню: вход, отправка прогресса, загрузка списка."""
+from PySide6.QtCore import QPoint, QSize, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QLineEdit, QMenu, QMessageBox, QPushButton, QVBoxLayout
 
 from .icons import icon
-from .theme import TEXT
+from .images import cover, rounded
+from .theme import ACCENT, TEXT
 from .widgets import label
 
 
 class ShikimoriButton(QPushButton):
+    """Не вошли — нажатие сразу открывает вход; вошли — аватар и ник, по нажатию меню аккаунта."""
+
     def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self.shiki_btn = self
-        self.setObjectName("NavButton")
-        self.setIcon(icon("link", TEXT, 17))
+        self.setObjectName("ShikiButton")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setIconSize(QSize(22, 22))
         self.setToolTip("Статистика просмотров и обсуждения серий на Shikimori")
         self.shiki_menu = QMenu(self)
-        self.shiki_menu.aboutToShow.connect(self._fill_shiki_menu)
-        self.setMenu(self.shiki_menu)
-        self.setStyleSheet("QPushButton::menu-indicator { width: 0; }")
+        self.clicked.connect(self._clicked)
         ctx.shiki.changed.connect(self._update_shiki_btn)
         self._update_shiki_btn()
 
+    def _clicked(self):
+        sh = self.ctx.shiki
+        if not sh.configured:
+            QMessageBox.information(self, "Shikimori", "Вход через Shikimori не настроен в этой сборке приложения:\n"
+                                    "нужны ключи OAuth-приложения Shikimori (см. README).\n\n"
+                                    "Обсуждения серий читать можно и без входа — кнопка с облачками в плеере (C).")
+            return
+        if not sh.logged_in():
+            self._shiki_login()
+            return
+        self._fill_shiki_menu()
+        # Кнопка внизу окна — меню открываем над ней
+        pos = self.mapToGlobal(QPoint(0, 0))
+        self.shiki_menu.exec(QPoint(pos.x(), pos.y() - self.shiki_menu.sizeHint().height()))
+
     def _update_shiki_btn(self):
         u = self.ctx.shiki.user()
-        self.shiki_btn.setText(f"  Shikimori: {u['nickname']}" if u else "  Войти через Shikimori")
+        self.setProperty("logged", bool(u))
+        self.style().unpolish(self)
+        self.style().polish(self)
+        if not u:
+            self.setText(" Войти в Shikimori")
+            self.setIcon(icon("link", ACCENT, 17))
+            return
+        self.setText(f"  {u['nickname']}")
+        self.setIcon(icon("circle-check", "#3fbf6a", 17))
+        if u.get("avatar"):
+            self.ctx.images.load(u["avatar"], self, lambda p: self.setIcon(QIcon(rounded(cover(p, 44, 44), 22))))
 
     def _fill_shiki_menu(self):
         sh = self.ctx.shiki
