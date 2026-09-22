@@ -382,11 +382,12 @@ function nativePlayer(root, opts) {
   // Управление видно HIDE_MS после последнего касания; на паузе, при перемотке и в меню — не прячем
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
   const tryHide = () => {
-    if (video.paused || dragging || !$(".pl-list").hidden || cp.isOpen() || !document.getElementById("sheet").hidden) return poke();
+    // Список серий и обсуждение — отдельные панели: из-за них управление не держим (иначе оно не пряталось вовсе)
+    if (video.paused || dragging || !document.getElementById("sheet").hidden) return poke();
     root.classList.add("pl-hidden");
   };
   const hideNow = () => { clearTimeout(hideTimer); root.classList.add("pl-hidden"); };
-  root.addEventListener("pointerdown", (e) => { if (e.target.closest(".pl-top, .pl-bottom, .pl-center, .pl-list, .pl-pill")) poke(); });
+  root.addEventListener("pointerdown", (e) => { if (e.target.closest(".pl-top, .pl-bottom, .pl-center, .pl-pill")) poke(); });
   const zoom = zoomer(root, video, false);
   zoom(store.setting("zoomFill", false));
   pinch(video, (fill) => { zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); });
@@ -886,8 +887,7 @@ function kodikPlayer(root, opts) {
   let hideTimer = null;
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
   const tryHide = () => {
-    if (!playing || dragging || root.classList.contains("k-ad") || !$(".kplist").hidden || cp.isOpen()
-      || !document.getElementById("sheet").hidden) return poke();
+    if (!playing || dragging || root.classList.contains("k-ad") || !document.getElementById("sheet").hidden) return poke();
     root.classList.add("pl-hidden");
   };
   // Касание по спрятанной панели — только показать её, без нажатия кнопки под пальцем
@@ -899,7 +899,7 @@ function kodikPlayer(root, opts) {
   root.addEventListener("pointerdown", (e) => {
     if (root.classList.contains("pl-hidden")) { root.dataset.reveal = "1"; return reveal(e); }
     delete root.dataset.reveal;
-    if (e.target.closest(".pl-top, .kpanel, .kplist, .pl-pill")) poke();
+    if (e.target.closest(".pl-top, .kpanel, .pl-pill")) poke();
   }, true);
   root.addEventListener("click", (e) => { if (root.dataset.reveal) { delete root.dataset.reveal; e.stopPropagation(); } }, true);
   const zoom = zoomer(root, frame, true);

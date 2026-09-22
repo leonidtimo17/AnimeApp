@@ -1212,7 +1212,7 @@ class PlayerWindow(QWidget):
 
     def _hide_controls(self):
         over_controls = any(w.isVisible() and w.geometry().contains(self.view.mapFromGlobal(QCursor.pos()))
-                            for w in (self.bottom, self.top, self.ep_list, self.comments))
+                            for w in (self.bottom, self.top))   # над списком серий и обсуждением — прячем
         if over_controls or any(m.isVisible() for m in self.findChildren(QMenu)):
             self.hide_timer.start()
             return
