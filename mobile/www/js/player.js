@@ -420,6 +420,24 @@ function nativePlayer(root, opts) {
     return masterUrl;
   }
 
+  /**
+   * Полностью освободить прошлое видео перед новым: отвязать MediaSource, очистить буферы элемента <video>.
+   * Без этого каждая серия оставляла в памяти WebView десятки мегабайт — на длинных сериалах приложение
+   * съедало память и планшет его закрывал.
+   */
+  function releaseMedia() {
+    if (hls) {
+      hls.stopLoad();
+      hls.detachMedia();
+      hls.destroy();
+      hls = null;
+      root.__hls = null;
+    }
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  }
+
   function setSource(pos) {
     const q = effQ();
     if (!q) return;
@@ -427,13 +445,16 @@ function nativePlayer(root, opts) {
     const url = ep().streams[q];
     curQ = q;
     updateQualityUi();
-    if (hls) { hls.destroy(); hls = null; }
+    releaseMedia();
     $(".spinner").hidden = false;
     const startAt = pos > 3 ? pos : 0;
     const allHls = qualities().every((x) => ep().streams[x].split("?")[0].endsWith(".m3u8"));
     if (url.split("?")[0].endsWith(".m3u8") && window.Hls?.isSupported()) {
       // Запас не больше ~45 с: иначе новое качество (после ускорения сети) видно только через пару минут
-      hls = new Hls({ maxBufferLength: 40, maxMaxBufferLength: 45, startPosition: startAt, manifestLoadingMaxRetry: 4,
+      // backBufferLength: уже просмотренное держим в памяти не дольше 30 с. По умолчанию hls.js хранит всю серию —
+      // к концу 24-минутной серии это сотни мегабайт, и на планшете система закрывала приложение.
+      hls = new Hls({ maxBufferLength: 40, maxMaxBufferLength: 45, backBufferLength: 30, maxBufferSize: 40 * 1000 * 1000,
+        startPosition: startAt, manifestLoadingMaxRetry: 4,
         levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000,
         capLevelToPlayerSize: false, abrEwmaDefaultEstimate: (speedCache.mbps || 3) * 1e6 });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
