@@ -131,11 +131,14 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 /* Плеер */
 #player { position: fixed; inset: 0; background: #000; z-index: 40; }
 #player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-/* Плеер Kodik: видео между верхней панелью и нашей панелью управления */
-#player iframe.kodik { position: absolute; left: 0; right: 0; top: calc(56px + var(--safe-top)); width: 100%;
-  bottom: calc(96px + var(--safe-bottom)); height: auto; border: 0; }
+/* Плеер Kodik: видео на весь экран, наши панели поверх; во время рекламы — между панелями, чтобы её кнопки были доступны */
+#player iframe.kodik { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; transition: transform .2s; }
+#player.k-ad iframe.kodik { top: calc(56px + var(--safe-top)); bottom: calc(96px + var(--safe-bottom)); height: auto; transform: none; }
+#player.kp { overflow: hidden; }
 .kpanel { position: absolute; left: 0; right: 0; bottom: 0; height: calc(96px + var(--safe-bottom));
-  padding: 8px 16px calc(8px + var(--safe-bottom)); background: #101014; border-top: 1px solid #24242c; }
+  padding: 8px 16px calc(8px + var(--safe-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.88) 35%);
+  transition: opacity .25s; }
+.k-ad .kpanel, .k-ad .pl-top { background: #101014; }
 .kpill { bottom: calc(112px + var(--safe-bottom)); }
 .kad { color: #ffb070; font-size: 13px; font-weight: 600; margin-right: 8px; display: none; }
 .k-ad .kad { display: inline; }
@@ -152,6 +155,8 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 .pl-bottom { bottom: 0; padding-bottom: calc(10px + var(--safe-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.85)); }
 /* При просмотре прячем всё управление, кроме «Пропустить заставку» / «Следующая серия» */
 .pl-hidden .pl-top:not(.solid), .pl-hidden .pl-bottom, .pl-hidden .pl-center { opacity: 0; pointer-events: none; }
+/* Kodik: спрятанные панели невидимы, но ловят касание, чтобы снова показаться */
+.kp.pl-hidden .pl-top, .kp.pl-hidden .kpanel { opacity: 0; pointer-events: auto; }
 .pl-btn { background: none; border: 0; color: #fff; font-size: 20px; padding: 10px 12px; border-radius: 10px; }
 .pl-btn.txt { font-size: 14px; font-weight: 700; }
 .pl-row { display: flex; align-items: center; gap: 2px; }

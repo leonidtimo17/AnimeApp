@@ -57,6 +57,44 @@ async function measure(url, force = false) {
   } catch { return null; }
 }
 
+const HIDE_MS = 5000;  // через сколько бездействия прятать управление
+
+/** Полноэкранный режим Android: без строки состояния и навигации (нативный плагин, веб-вариант Capacitor отменяет). */
+const systemBars = (hidden) => window.Capacitor?.Plugins?.PlayerScreen?.fullscreen({ on: hidden }).catch(() => {});
+
+/**
+ * Масштаб картинки: «вписать» (видно весь кадр, возможны чёрные полосы) или «заполнить экран» (края обрезаются).
+ * Возвращает apply(fill) — применить и запомнить.
+ */
+function zoomer(root, target, isFrame) {
+  const apply = (fill) => {
+    store.setSetting("zoomFill", fill);
+    root.classList.toggle("zoom-fill", fill);
+    root.querySelectorAll("[data-a=fs]").forEach((b) => (b.innerHTML = fa(fill ? "compress" : "expand")));
+    if (!isFrame) { target.style.objectFit = fill ? "cover" : "contain"; return; }
+    // Kodik — внутрь iframe не залезть, поэтому увеличиваем сам iframe так, чтобы кадр 16:9 закрыл экран
+    const w = root.clientWidth, h = root.clientHeight;
+    const vw = Math.min(w, (h * 16) / 9), vh = (vw * 9) / 16;
+    target.style.transform = fill && vw && vh ? `scale(${Math.max(w / vw, h / vh).toFixed(3)})` : "";
+  };
+  return apply;
+}
+
+/**
+ * Жест двумя пальцами: развести — заполнить экран, свести — вписать.
+ */
+function pinch(el, onZoom) {
+  let d0 = 0;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  el.addEventListener("touchstart", (e) => { if (e.touches.length === 2) d0 = dist(e.touches); }, { passive: true });
+  el.addEventListener("touchmove", (e) => {
+    if (!d0 || e.touches.length !== 2) return;
+    const r = dist(e.touches) / d0;
+    if (r > 1.15 || r < 0.87) { onZoom(r > 1); d0 = 0; }
+  }, { passive: true });
+  el.addEventListener("touchend", () => (d0 = 0));
+}
+
 /**
  * open({rel, dub, dubs, eps, key, position, seasons, onDub(dub, key, pos), onSeason(entry), onClose})
  */
@@ -67,13 +105,15 @@ export function open(opts) {
   root.hidden = false;
   root.innerHTML = "";
   root.style.transform = root.style.opacity = root.style.transition = "";
+  root.className = "";
+  systemBars(true);
   const ctl = opts.dub.native ? nativePlayer(root, opts) : kodikPlayer(root, opts);
   close.current = (notify = true) => {
     ctl.destroy();
     root.hidden = true;
     root.innerHTML = "";
     close.current = null;
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    systemBars(false);
     if (notify) opts.onClose?.();
   };
   const entry = store.entry(opts.rel.id);
@@ -100,6 +140,7 @@ function swipeToClose(root, handle) {
   }, { passive: true });
   handle.addEventListener("touchmove", (e) => {
     if (!start) return;
+    if (e.touches.length > 1) { start = null; reset(true); return; }
     const dx = e.touches[0].clientX - start.x;
     dy = e.touches[0].clientY - start.y;
     if (dy <= 10 || Math.abs(dx) > dy) { if (dy <= 0) root.style.transform = ""; return; }
@@ -224,7 +265,17 @@ function nativePlayer(root, opts) {
   });
   let osdTimer;
   const osd = (t, ms = 1200) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), ms); };
-  const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); if (!video.paused) hideTimer = setTimeout(() => root.classList.add("pl-hidden"), 3000); };
+  // Управление видно HIDE_MS после последнего касания; на паузе, при перемотке и в меню — не прячем
+  const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
+  const tryHide = () => {
+    if (video.paused || dragging || !$(".pl-list").hidden || !document.getElementById("sheet").hidden) return poke();
+    root.classList.add("pl-hidden");
+  };
+  const hideNow = () => { clearTimeout(hideTimer); root.classList.add("pl-hidden"); };
+  root.addEventListener("pointerdown", (e) => { if (e.target.closest(".pl-top, .pl-bottom, .pl-center, .pl-list, .pl-pill")) poke(); });
+  const zoom = zoomer(root, video, false);
+  zoom(store.setting("zoomFill", false));
+  pinch(video, (fill) => { zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); });
 
   function save(force) {
     const e = ep();
@@ -471,7 +522,7 @@ function nativePlayer(root, opts) {
     setTimeout(() => {
       if (lastTap !== now) return;
       if (!$(".pl-list").hidden) { $(".pl-list").hidden = true; return; }
-      root.classList.toggle("pl-hidden");
+      if (root.classList.contains("pl-hidden")) poke(); else hideNow();
     }, 300);
   });
 
@@ -504,8 +555,9 @@ function nativePlayer(root, opts) {
       ] }, { title: "Настройки", items: [{ label: "Автопропуск заставки", on: store.setting("autoskip", false),
         action: () => store.setSetting("autoskip", !store.setting("autoskip", false)) }] }]);
     } else if (a === "fs") {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else root.requestFullscreen?.().then(() => screen.orientation?.lock?.("landscape").catch(() => {})).catch(() => {});
+      const fill = !root.classList.contains("zoom-fill");
+      zoom(fill);
+      osd(fill ? "На весь экран" : "Весь кадр");
     }
   };
   $(".pl-list").onclick = (e) => { const d = e.target.closest("[data-i]"); if (d) { go(+d.dataset.i); $(".pl-list").hidden = true; } };
@@ -576,9 +628,12 @@ function kodikPlayer(root, opts) {
   let pos = 0, dur = 0, lastSave = 0, seekTo = 0, countTimer = null, playing = false, dragging = false, osdTimer;
   let lastTick = Date.now(), userPaused = false, started = false;
   const team = opts.dub.id.split(":")[1];
-  // Своя панель под видео: поверх iframe Kodik ставить нельзя — он забирает касания себе.
+  // Видео Kodik на весь экран, наши панели — поверх него сверху и снизу.
+  // Касания по самому видео забирает iframe, поэтому спрятанные панели остаются «прозрачными кнопками»:
+  // первое касание по краю экрана только показывает управление.
+  root.classList.add("kp");
   root.innerHTML = `
-    <div class="pl-top solid">
+    <div class="pl-top">
       <button class="pl-btn" data-a="back">${fa("back")}</button>
       <div class="ttl"><b>${esc(src.title(rel))}</b><small class="sub"></small></div>
       <button class="pl-btn" data-a="seasons" ${opts.seasons?.length ? "" : "hidden"}>${fa("layers")}</button>
@@ -602,6 +657,7 @@ function kodikPlayer(root, opts) {
         <span class="sp"></span>
         <span class="kad">Идёт реклама Kodik…</span>
         <button class="pl-btn txt ctl kskip" data-a="skip85">${fa("fwd")} Пропустить заставку</button>
+        <button class="pl-btn" data-a="fs">${fa("expand")}</button>
       </div>
     </div>`;
   const $ = (s) => root.querySelector(s);
@@ -610,7 +666,29 @@ function kodikPlayer(root, opts) {
   swipeToClose(root, $(".pl-top")); // свайп вниз по верхней панели — закрыть
   const cmd = (v) => frame.contentWindow?.postMessage({ key: "kodik_player_api", value: v }, "*");
   const osd = (t) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), 1000); };
-  const setAd = (on) => root.classList.toggle("k-ad", on);
+  const setAd = (on) => { root.classList.toggle("k-ad", on); if (on) poke(); };
+  let hideTimer = null;
+  const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
+  const tryHide = () => {
+    if (!playing || dragging || root.classList.contains("k-ad") || !$(".kplist").hidden
+      || !document.getElementById("sheet").hidden) return poke();
+    root.classList.add("pl-hidden");
+  };
+  // Касание по спрятанной панели — только показать её, без нажатия кнопки под пальцем
+  const reveal = (e) => {
+    if (!root.classList.contains("pl-hidden") || !e.target.closest(".pl-top, .kpanel")) return;
+    e.stopPropagation(); e.preventDefault();
+    poke();
+  };
+  root.addEventListener("pointerdown", (e) => {
+    if (root.classList.contains("pl-hidden")) { root.dataset.reveal = "1"; return reveal(e); }
+    delete root.dataset.reveal;
+    if (e.target.closest(".pl-top, .kpanel, .kplist, .pl-pill")) poke();
+  }, true);
+  root.addEventListener("click", (e) => { if (root.dataset.reveal) { delete root.dataset.reveal; e.stopPropagation(); } }, true);
+  const zoom = zoomer(root, frame, true);
+  const onResize = () => zoom(root.classList.contains("zoom-fill"));
+  window.addEventListener("resize", onResize);
 
   function render() {
     $(".pl-time").textContent = `${fmtTime(pos)} / ${fmtTime(dur)}`;
@@ -670,8 +748,8 @@ function kodikPlayer(root, opts) {
     } else if (d.key === "kodik_player_time_update") {
       pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
       if (dur > 300 && dur - pos < 40) countdown();
-    } else if (d.key === "kodik_player_play") { playing = true; userPaused = false; lastTick = Date.now(); render(); }
-    else if (d.key === "kodik_player_pause") { playing = false; userPaused = true; render(); save(true); }
+    } else if (d.key === "kodik_player_play") { playing = true; userPaused = false; lastTick = Date.now(); render(); poke(); }
+    else if (d.key === "kodik_player_pause") { playing = false; userPaused = true; render(); save(true); poke(); }
     else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); countdown(); }
     else if (d.event === "adShown" || d.title === "vastStarted" || d.key === "kodik_player_advert_started") setAd(true);
     else if (d.key === "kodik_player_advert_ended" || d.title === "currentVastEnded") setAd(false);
@@ -720,6 +798,7 @@ function kodikPlayer(root, opts) {
     }
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
+    else if (a === "fs") { const fill = !root.classList.contains("zoom-fill"); zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); }
   };
   $(".kplist").addEventListener("click", (ev) => {
     const it = ev.target.closest("[data-i]");
@@ -729,8 +808,11 @@ function kodikPlayer(root, opts) {
     load(+it.dataset.i, null);
   });
   load(idx, startPos);
+  zoom(store.setting("zoomFill", false));
+  poke();
   return { destroy() {
-    save(true); clearInterval(countTimer); clearInterval(watchdog); window.removeEventListener("message", onMsg);
+    save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); window.removeEventListener("message", onMsg);
+    window.removeEventListener("resize", onResize);
     window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
     frame.src = "about:blank";
   } };
