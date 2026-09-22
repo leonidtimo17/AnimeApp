@@ -59,6 +59,56 @@ async function measure(url, force = false) {
 
 const HIDE_MS = 5000;  // через сколько бездействия прятать управление
 
+/**
+ * Горячие клавиши для планшета с клавиатурой — как на ПК. Буквы берём по физической клавише (e.code),
+ * поэтому работают и в русской раскладке. Кнопочные действия нажимают те же кнопки, что и пальцем.
+ * extra: {seek(сек), volume(шаг), mute(), skip(), speed?(±1), percent(0..0.9), osd(text, ms)}
+ */
+const HOTKEYS_HELP = "Пробел/K — пауза   ←/→ — 10 с (Shift — 30 с)   ↑/↓ — громкость   M — звук\n"
+  + "N/P — следующая/предыдущая серия   S — пропустить заставку   E — список серий\n"
+  + "F или Z — масштаб   T — таймер сна   [ / ] — скорость   0–9 — перейти в %   Esc — закрыть";
+function hotkeys(root, extra) {
+  const click = (a) => {
+    const b = root.querySelector(`[data-a="${a}"]`);
+    if (b && !b.disabled && !b.hidden) b.click();
+    document.activeElement?.blur?.();  // иначе пробел ещё раз «нажмёт» кнопку в фокусе
+  };
+  const list = () => root.querySelector(".pl-list:not([hidden])");
+  const onKey = (e) => {
+    if (e.target.closest?.("input, textarea, select") || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!document.getElementById("sheet").hidden) return;  // открыто меню — Esc закроет его приложение
+    const k = e.key.toLowerCase(), code = e.code;
+    if (k === "escape") {
+      if (!list()) return;  // закрыть плеер — это «назад» приложения
+      list().hidden = true;
+      e.preventDefault(); e.stopPropagation();
+      return;
+    }
+    let done = true;
+    if (k === " " || code === "KeyK" || k === "mediaplaypause") click("play");
+    else if (k === "arrowleft" || code === "KeyJ") extra.seek(e.shiftKey ? -30 : -10);
+    else if (k === "arrowright" || code === "KeyL") extra.seek(e.shiftKey ? 30 : 10);
+    else if (k === "arrowup") extra.volume(0.1);
+    else if (k === "arrowdown") extra.volume(-0.1);
+    else if (code === "KeyM") extra.mute();
+    else if (code === "KeyN" || k === "mediatracknext") click("next");
+    else if (code === "KeyP" || k === "mediatrackprevious") click("prev");
+    else if (code === "KeyS") extra.skip();
+    else if (code === "KeyE") click(root.querySelector("[data-a=list]") ? "list" : "eps");
+    else if (code === "KeyF" || code === "KeyZ") click("fs");
+    else if (code === "KeyT") click("sleep");
+    else if (code === "BracketRight" && extra.speed) extra.speed(1);
+    else if (code === "BracketLeft" && extra.speed) extra.speed(-1);
+    else if (/^(Digit|Numpad)\d$/.test(code)) extra.percent(+code.slice(-1) / 10);
+    else if (k === "?" || code === "KeyH" || k === "f1") extra.osd(HOTKEYS_HELP, 6000);
+    else done = false;
+    if (done) e.preventDefault();
+  };
+  document.addEventListener("keydown", onKey, true);
+  return () => document.removeEventListener("keydown", onKey, true);
+}
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
 /** Таймер сна: остановить видео через N минут или после текущей серии. Живёт между сериями и сменой озвучки. */
 const sleep = { until: 0, min: 0, episode: false };
 const sleepActive = () => sleep.episode || sleep.until > Date.now();
@@ -540,6 +590,25 @@ function nativePlayer(root, opts) {
   });
   saveTimer = setInterval(save, 5000);
   const sleepTimer = setInterval(() => sleepTick(root, () => video.pause(), osd), 1000);
+  const unbindKeys = hotkeys(root, {
+    osd,
+    seek: (s) => { video.currentTime = Math.max(0, video.currentTime + s); osd(s > 0 ? `+${s} с` : `−${-s} с`, 700); },
+    volume: (d) => {
+      video.muted = false;
+      video.volume = Math.min(1, Math.max(0, Math.round((video.volume + d) * 10) / 10));
+      osd(`Громкость ${Math.round(video.volume * 100)}%`, 800);
+    },
+    mute: () => { video.muted = !video.muted; osd(video.muted ? "Звук выключен" : "Звук включён", 800); },
+    skip: () => { if (ep().opening?.stop && video.currentTime < ep().opening.stop) skipOpening(); else osd("Заставки сейчас нет", 900); },
+    speed: (d) => {
+      const i = SPEEDS.indexOf(video.playbackRate);
+      const s = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, (i < 0 ? 2 : i) + d))];
+      video.playbackRate = s;
+      $("[data-a=speed]").textContent = `${s}x`;
+      osd(`Скорость ${s}x`, 800);
+    },
+    percent: (f) => { if (video.duration) { video.currentTime = f * video.duration; osd(`${Math.round(f * 100)}%`, 700); } },
+  });
 
   // --- удержание пальца на видео — скорость 2x, пока держите (как в YouTube)
   let holdTimer = null, holdFrom = null, holdRate = null, holdEnded = 0;
@@ -688,6 +757,7 @@ function nativePlayer(root, opts) {
   return {
     destroy() {
       save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog); clearInterval(sleepTimer);
+      unbindKeys();
       clearInterval(upgradeTimer); if (masterUrl) URL.revokeObjectURL(masterUrl);
       window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
       if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load();
@@ -904,10 +974,29 @@ function kodikPlayer(root, opts) {
   });
   load(idx, startPos);
   const sleepTimer = setInterval(() => sleepTick(root, () => { cmd({ method: "pause" }); playing = false; render(); }, osd), 1000);
+  let kvol = 1, kmuted = false;
+  const unbindKeys = hotkeys(root, {
+    osd,
+    seek: (s) => { seek(pos + s); osd(s > 0 ? `+${s} с` : `−${-s} с`); },
+    volume: (d) => {
+      kvol = Math.min(1, Math.max(0, Math.round((kvol + d) * 10) / 10));
+      cmd({ method: "volume", volume: kvol });
+      osd(`Громкость ${Math.round(kvol * 100)}%`);
+    },
+    mute: () => { kmuted = !kmuted; cmd({ method: kmuted ? "mute" : "unmute" }); osd(kmuted ? "Звук выключен" : "Звук включён"); },
+    skip: () => root.querySelector("[data-a=skip85]").click(),
+    percent: (f) => { if (dur) seek(f * dur); },
+  });
+  // После касания видео фокус клавиатуры уходит внутрь iframe Kodik, и клавиши туда не доходят — забираем фокус обратно
+  const onBlur = () => setTimeout(() => {
+    if (document.activeElement === frame) { frame.blur(); window.focus(); }
+  }, 0);
+  window.addEventListener("blur", onBlur);
   zoom(store.setting("zoomFill", false));
   poke();
   return { destroy() {
     save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); clearInterval(sleepTimer);
+    unbindKeys(); window.removeEventListener("blur", onBlur);
     window.removeEventListener("message", onMsg);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);

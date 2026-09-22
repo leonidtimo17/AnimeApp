@@ -29,7 +29,29 @@ function back() {
   return true;
 }
 tabs.onclick = (e) => { const b = e.target.closest("[data-tab]"); if (b) { history.length = 0; show(b.dataset.tab); } };
-window.Capacitor?.Plugins?.App?.addListener("backButton", () => { if (!back()) window.Capacitor.Plugins.App.exitApp(); });
+// Клавиатура (планшет с клавиатурой): Esc — назад, Ctrl+F или / — поиск. Клавиши плеера — в player.js.
+// Esc на Android может прийти ещё и как системная «Назад» — второе срабатывание подряд пропускаем.
+let lastEsc = 0;
+window.Capacitor?.Plugins?.App?.addListener("backButton", () => {
+  if (Date.now() - lastEsc < 400) return;
+  if (!back()) window.Capacitor.Plugins.App.exitApp();
+});
+document.addEventListener("keydown", (e) => {
+  const typing = e.target.closest?.("input, textarea, select");
+  if (e.key === "Escape") {
+    e.preventDefault();
+    lastEsc = Date.now();
+    if (typing) e.target.blur();
+    else back();
+    return;
+  }
+  if (typing || player.isOpen()) return;
+  if ((e.ctrlKey && e.code === "KeyF") || e.key === "/") {
+    e.preventDefault();
+    if (current?.name !== "search") show("search");
+    setTimeout(() => view.querySelector("#q")?.focus(), 50);
+  }
+});
 
 const openAnime = (item) => {
   if (item.release) store.remember(item.release, { poster: item.poster, subtitle: item.subtitle });

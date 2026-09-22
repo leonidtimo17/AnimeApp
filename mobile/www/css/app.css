@@ -160,6 +160,7 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 .pl-btn { background: none; border: 0; color: #fff; font-size: 20px; padding: 10px 12px; border-radius: 10px; }
 .pl-btn.txt { font-size: 14px; font-weight: 700; }
 .pl-btn.on { color: var(--accent); }
+#player .pl-osd { white-space: pre-line; text-align: center; }
 .pl-row { display: flex; align-items: center; gap: 2px; }
 .pl-row .sp { flex: 1; }
 .pl-time { font-weight: 600; font-size: 14px; margin: 0 8px; }
