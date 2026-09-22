@@ -28,33 +28,59 @@ function recommend(mbps, available) {
   return avail.find((q) => requiredMbps(q) <= mbps) || avail.at(-1);
 }
 
-// Замер скорости по кусочку этого же видео (как у онлайн-кинотеатров)
+// Замер скорости по кусочку этого же видео (как у онлайн-кинотеатров).
+// Качаем два куска параллельно до ~3.5 с и считаем скорость только после «разгона» соединения:
+// короткая закачка почти целиком уходит на установку соединения и показывала в 5–10 раз меньше настоящей скорости.
+const PROBE_MS = 3500, PROBE_BYTES = 16_000_000, WARMUP_MS = 500;
+
+/** Адреса для замера: первые сегменты HLS или два куска mp4. [[url, range|null], ...] */
+async function probeTargets(url) {
+  let media = url;
+  for (let depth = 0; depth < 2 && media.split("?")[0].endsWith(".m3u8"); depth++) {
+    const text = await (await fetch(media)).text();
+    const lines = text.split("\n").map((s) => s.trim()).filter((s) => s && !s.startsWith("#"));
+    if (!lines.length) return [];
+    if (!text.includes("#EXTINF")) { media = new URL(lines[0], media).href; continue; }  // мастер → вариант
+    return lines.slice(0, 2).map((s) => [new URL(s, media).href, null]);
+  }
+  return [[media, "bytes=0-7999999"], [media, "bytes=8000000-15999999"]];
+}
+
 async function measure(url, force = false) {
   if (!force && speedCache.mbps != null && Date.now() - speedCache.t < 600_000) return speedCache.mbps;
   try {
-    let seg = url;
-    for (let depth = 0; depth < 2 && seg.split("?")[0].endsWith(".m3u8"); depth++) {
-      const text = await (await fetch(seg)).text();
-      const line = text.split("\n").map((s) => s.trim()).find((s) => s && !s.startsWith("#"));
-      if (!line) return null;
-      seg = new URL(line, seg).href;
-    }
-    const ctrl = new AbortController();
-    const res = await fetch(seg, { headers: { Range: "bytes=0-2499999" }, signal: ctrl.signal });
-    const reader = res.body.getReader();
-    let bytes = 0, t0 = 0;
-    const deadline = performance.now() + 4000;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (!t0) t0 = performance.now();
-      if (done) break;
-      bytes += value.length;
-      if (bytes >= 2_500_000 || performance.now() > deadline) { ctrl.abort(); break; }
-    }
-    const sec = (performance.now() - t0) / 1000;
-    if (bytes < 150_000 || sec <= 0.05) return null;
-    speedCache = { t: Date.now(), mbps: (bytes * 8) / sec / 1e6 };
-    return speedCache.mbps;
+    const targets = await probeTargets(url);
+    if (!targets.length) return null;
+    const ctrls = targets.map(() => new AbortController());
+    const samples = [];  // [время, всего байт]
+    let total = 0, t0 = 0;
+    const stopAll = () => ctrls.forEach((c) => c.abort());
+    const timer = setTimeout(stopAll, PROBE_MS);
+    await Promise.all(targets.map(async ([u, range], i) => {
+      try {
+        const res = await fetch(u, { headers: range ? { Range: range } : {}, signal: ctrls[i].signal, cache: "no-store" });
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const now = performance.now();
+          if (!t0) t0 = now;
+          total += value.length;
+          samples.push([now, total]);
+          if (total >= PROBE_BYTES) { stopAll(); break; }
+        }
+      } catch { /* прервали по времени или объёму */ }
+    }));
+    clearTimeout(timer);
+    if (total < 300_000 || samples.length < 2) return null;
+    const end = samples.at(-1);
+    // Окно после разгона; если всё скачалось мгновенно — считаем по всей закачке
+    const warm = samples.find(([t]) => t - t0 >= WARMUP_MS);
+    const [ta, ba] = warm && end[0] - warm[0] >= 300 ? warm : [t0, 0];
+    const mbps = ((end[1] - ba) * 8) / ((end[0] - ta) / 1000) / 1e6;
+    if (!isFinite(mbps) || mbps <= 0) return null;
+    speedCache = { t: Date.now(), mbps };
+    return mbps;
   } catch { return null; }
 }
 
@@ -384,7 +410,8 @@ function nativePlayer(root, opts) {
     if (quality === "auto") {
       $(".spinner").hidden = false;
       if (speedCache.mbps == null) osd("Проверяем скорость интернета…", 4000);
-      const mbps = await measure(e.streams["720"] || e.streams["480"] || Object.values(e.streams)[0]);
+      // Замеряем на самом высоком качестве: у него крупные куски, замер точнее
+      const mbps = await measure(e.streams[qualities()[0]] || Object.values(e.streams)[0]);
       if (ep() !== e) return;
       recommended = recommend(mbps, avail);
       if (mbps) osd(`Интернет ~${Math.round(mbps)} Мбит/с → ${qLabel(recommended)} (рекомендовано)`, 2500);

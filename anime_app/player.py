@@ -777,7 +777,8 @@ class PlayerWindow(QWidget):
         self.loading.show()
         self._layout_overlay()
         streams = ep["streams"]
-        url = streams.get("720") or streams.get("480") or next(iter(streams.values()))
+        # Замеряем на самом высоком качестве: у него крупные куски, замер точнее
+        url = streams.get(self._qualities()[0]) if self._qualities() else next(iter(streams.values()))
 
         def done(mbps):
             self._probing = False
