@@ -59,6 +59,38 @@ async function measure(url, force = false) {
 
 const HIDE_MS = 5000;  // через сколько бездействия прятать управление
 
+/** Таймер сна: остановить видео через N минут или после текущей серии. Живёт между сериями и сменой озвучки. */
+const sleep = { until: 0, min: 0, episode: false };
+const sleepActive = () => sleep.episode || sleep.until > Date.now();
+function sleepMenu(osd) {
+  const set = (min, episode) => {
+    Object.assign(sleep, { min, episode, until: min ? Date.now() + min * 60_000 : 0 });
+    osd(min ? `Таймер сна: остановлю через ${min} мин` : episode ? "Остановлю после этой серии" : "Таймер сна выключен", 1800);
+  };
+  const left = sleep.until > Date.now() ? ` · осталось ${Math.ceil((sleep.until - Date.now()) / 60_000)} мин` : "";
+  sheet([{ title: `Таймер сна${left}`, items: [
+    { label: "Выключен", on: !sleepActive(), action: () => set(0, false) },
+    { label: "После этой серии", on: sleep.episode, action: () => set(0, true) },
+    ...[15, 30, 45, 60, 90].map((m) => ({ label: `Через ${m} минут`, on: sleep.until > Date.now() && sleep.min === m, action: () => set(m, false) })),
+  ] }]);
+}
+/** Раз в секунду: пора ли остановить видео по таймеру (минуты). */
+function sleepTick(root, pause, osd) {
+  root.querySelectorAll("[data-a=sleep]").forEach((b) => b.classList.toggle("on", sleepActive()));
+  if (sleep.until && Date.now() >= sleep.until) {
+    Object.assign(sleep, { until: 0, min: 0 });
+    pause();
+    osd("Таймер сна — видео остановлено. Спокойной ночи!", 4000);
+  }
+}
+/** Серия закончилась: если таймер «после этой серии» — не включаем следующую. */
+function sleepAfterEpisode(osd) {
+  if (!sleep.episode) return false;
+  sleep.episode = false;
+  osd("Таймер сна — серия закончилась. Спокойной ночи!", 4000);
+  return true;
+}
+
 /** Полноэкранный режим Android: без строки состояния и навигации (нативный плагин, веб-вариант Capacitor отменяет). */
 const systemBars = (hidden) => window.Capacitor?.Plugins?.PlayerScreen?.fullscreen({ on: hidden }).catch(() => {});
 
@@ -225,6 +257,7 @@ function nativePlayer(root, opts) {
         <button class="pl-btn txt" data-a="dub">${fa("mic")} ${esc(opts.dub.name)}</button>
         <button class="pl-btn txt" data-a="speed">1x</button>
         <button class="pl-btn txt" data-a="quality">HD</button>
+        <button class="pl-btn" data-a="sleep" title="Таймер сна">${fa("moon")}</button>
         <button class="pl-btn" data-a="fs">${fa("expand")}</button>
       </div>
     </div>
@@ -448,7 +481,7 @@ function nativePlayer(root, opts) {
     const t = video.currentTime, d = video.duration || 0;
     const op = e.opening;
     const inOpening = op?.stop && op.start != null && t >= op.start && t < op.stop - 1.5;
-    const inCredits = e.ending?.start ? t >= e.ending.start : d > 300 && d - t <= 45;
+    const inCredits = (e.ending?.start ? t >= e.ending.start : d > 300 && d - t <= 45) && !sleep.episode;
     const box = $(".pl-pill");
     if (inOpening && store.setting("autoskip", false) && !openingSkipped) { skipOpening(); return; }
     if (inOpening && !box.dataset.mode) {
@@ -481,7 +514,17 @@ function nativePlayer(root, opts) {
   video.addEventListener("playing", () => { $(".spinner").hidden = true; $("[data-a=play]").innerHTML = fa("pause"); poke(); });
   video.addEventListener("canplay", () => ($(".spinner").hidden = true));
   video.addEventListener("pause", () => { $("[data-a=play]").innerHTML = fa("play"); poke(); save(); });
-  video.addEventListener("loadedmetadata", renderMarks);
+  video.addEventListener("loadedmetadata", () => { renderMarks(); fillSkips(); });
+  // Нет разметки заставки/титров у источника — берём у AniSkip
+  async function fillSkips() {
+    const e = ep();
+    if (e.opening?.stop && e.ending?.start) return;
+    const s = await src.skipTimes(rel.shikimori?.id, e.ordinal, video.duration);
+    if (!s || ep() !== e) return;
+    if (!e.opening?.stop && s.opening) e.opening = s.opening;
+    if (!e.ending?.start && s.ending) e.ending = s.ending;
+    renderMarks();
+  }
   video.addEventListener("timeupdate", () => {
     const d = video.duration || 0, t = video.currentTime;
     $(".pl-time").textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
@@ -491,10 +534,40 @@ function nativePlayer(root, opts) {
   });
   video.addEventListener("ended", () => {
     save("end");
+    if (sleepAfterEpisode(osd)) return;
     if (idx < eps.length - 1 && !nextCancelled) go(idx + 1);
     else osd("Это была последняя серия", 3000);
   });
   saveTimer = setInterval(save, 5000);
+  const sleepTimer = setInterval(() => sleepTick(root, () => video.pause(), osd), 1000);
+
+  // --- удержание пальца на видео — скорость 2x, пока держите (как в YouTube)
+  let holdTimer = null, holdFrom = null, holdRate = null, holdEnded = 0;
+  video.addEventListener("pointerdown", (e) => {
+    if (!e.isPrimary) return;
+    holdFrom = { x: e.clientX, y: e.clientY };
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      if (video.paused) return;
+      holdRate = video.playbackRate;
+      video.playbackRate = 2;
+      osd("▶▶ Скорость 2x — пока держите палец", 60_000);
+    }, 450);
+  });
+  video.addEventListener("pointermove", (e) => {
+    if (holdFrom && Math.hypot(e.clientX - holdFrom.x, e.clientY - holdFrom.y) > 12) clearTimeout(holdTimer);
+  });
+  const endHold = () => {
+    clearTimeout(holdTimer);
+    holdFrom = null;
+    if (holdRate == null) return;
+    video.playbackRate = holdRate;
+    holdRate = null;
+    holdEnded = Date.now();
+    $(".pl-osd").hidden = true;
+  };
+  video.addEventListener("pointerup", endHold);
+  video.addEventListener("pointercancel", endHold);
 
   // --- перемотка пальцем
   let dragging = false;
@@ -509,7 +582,7 @@ function nativePlayer(root, opts) {
   // --- касания: тап — показать/скрыть панель, двойной тап слева/справа — ±10 с
   let lastTap = 0;
   video.addEventListener("click", (e) => {
-    if (wasSwipe()) return;
+    if (wasSwipe() || Date.now() - holdEnded < 400) return;
     const now = Date.now();
     if (now - lastTap < 300) {
       const right = e.clientX > root.clientWidth / 2;
@@ -542,6 +615,7 @@ function nativePlayer(root, opts) {
     else if (a === "list") { $(".pl-list").hidden = !$(".pl-list").hidden; renderList(); }
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
+    else if (a === "sleep") sleepMenu(osd);
     else if (a === "speed") sheet([{ title: "Скорость", items: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => ({
       label: `${s}x${s === 1 ? " (обычная)" : ""}`, on: video.playbackRate === s,
       action: () => { video.playbackRate = s; b.textContent = `${s}x`; } })) }]);
@@ -613,7 +687,7 @@ function nativePlayer(root, opts) {
   poke();
   return {
     destroy() {
-      save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog);
+      save(); clearInterval(saveTimer); clearInterval(countTimer); clearTimeout(hideTimer); clearInterval(watchdog); clearInterval(sleepTimer);
       clearInterval(upgradeTimer); if (masterUrl) URL.revokeObjectURL(masterUrl);
       window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
       if (hls) hls.destroy(); video.pause(); video.removeAttribute("src"); video.load();
@@ -657,6 +731,7 @@ function kodikPlayer(root, opts) {
         <span class="sp"></span>
         <span class="kad">Идёт реклама Kodik…</span>
         <button class="pl-btn txt ctl kskip" data-a="skip85">${fa("fwd")} Пропустить заставку</button>
+        <button class="pl-btn" data-a="sleep" title="Таймер сна">${fa("moon")}</button>
         <button class="pl-btn" data-a="fs">${fa("expand")}</button>
       </div>
     </div>`;
@@ -665,7 +740,7 @@ function kodikPlayer(root, opts) {
   const m = menus(opts, () => [eps[idx].key, pos]);
   swipeToClose(root, $(".pl-top")); // свайп вниз по верхней панели — закрыть
   const cmd = (v) => frame.contentWindow?.postMessage({ key: "kodik_player_api", value: v }, "*");
-  const osd = (t) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), 1000); };
+  const osd = (t, ms = 1000) => { const o = $(".pl-osd"); o.textContent = t; o.hidden = false; clearTimeout(osdTimer); osdTimer = setTimeout(() => (o.hidden = true), ms); };
   const setAd = (on) => { root.classList.toggle("k-ad", on); if (on) poke(); };
   let hideTimer = null;
   const poke = () => { root.classList.remove("pl-hidden"); clearTimeout(hideTimer); hideTimer = setTimeout(tryHide, HIDE_MS); };
@@ -720,7 +795,7 @@ function kodikPlayer(root, opts) {
     $("[data-a=next]").disabled = i >= eps.length - 1;
     $(".spinner").hidden = false;
     try {
-      const r = await src.kodikSource(e.animelib, team);
+      const r = e.kodik ? { src: e.kodik, team: opts.dub.name } : await src.kodikSource(e.animelib, team);
       $(".sub").textContent = `${src.fmtOrd(e.ordinal)} серия · ${r.team || opts.dub.name}${r.fallback ? " (выбранной озвучки нет — другая)" : ""}`;
       frame.src = r.src;
     } catch (err) {
@@ -729,7 +804,7 @@ function kodikPlayer(root, opts) {
     }
   }
   function countdown() {
-    if (idx >= eps.length - 1 || countTimer) return;
+    if (idx >= eps.length - 1 || countTimer || sleep.episode) return;
     let n = 10;
     const box = $(".pl-pill");
     box.innerHTML = `<button data-a="stay">Смотреть титры</button><button class="acc" data-a="next">Следующая серия через ${n}</button>`;
@@ -744,13 +819,27 @@ function kodikPlayer(root, opts) {
     const d = ev.data || {};
     if (d.key === "kodik_player_duration_update") {
       dur = d.value; render();
+      const e = eps[idx];
+      if (!e.opening?.stop || !e.ending?.start) {
+        src.skipTimes(rel.shikimori?.id, e.ordinal, dur).then((s) => {
+          if (!s || eps[idx] !== e) return;
+          if (!e.opening?.stop && s.opening) e.opening = s.opening;
+          if (!e.ending?.start && s.ending) e.ending = s.ending;
+        });
+      }
       if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({ method: "seek", seconds: s }); osd(`Продолжаем с ${fmtTime(s)}`); }, 600); }
     } else if (d.key === "kodik_player_time_update") {
       pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
-      if (dur > 300 && dur - pos < 40) countdown();
+      const e = eps[idx];
+      if (e.ending?.start ? pos >= e.ending.start : dur > 300 && dur - pos < 40) countdown();
+      // Автопропуск заставки (настройка встроенного плеера), когда её время известно
+      const op = e.opening;
+      if (op?.stop && op.start != null && pos >= op.start && pos < op.stop - 2 && store.setting("autoskip", false) && !e._skipped) {
+        e._skipped = true; seek(op.stop); osd("Заставка пропущена");
+      }
     } else if (d.key === "kodik_player_play") { playing = true; userPaused = false; lastTick = Date.now(); render(); poke(); }
     else if (d.key === "kodik_player_pause") { playing = false; userPaused = true; render(); save(true); poke(); }
-    else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); countdown(); }
+    else if (d.key === "kodik_player_video_ended") { pos = dur; playing = false; render(); save(true); if (!sleepAfterEpisode(osd)) countdown(); }
     else if (d.event === "adShown" || d.title === "vastStarted" || d.key === "kodik_player_advert_started") setAd(true);
     else if (d.key === "kodik_player_advert_ended" || d.title === "currentVastEnded") setAd(false);
   };
@@ -789,7 +878,12 @@ function kodikPlayer(root, opts) {
     else if (a === "prev") load(idx - 1, null);
     else if (a === "next") load(idx + 1, null);
     else if (a === "stay") { clearInterval(countTimer); countTimer = null; $(".pl-pill").innerHTML = ""; }
-    else if (a === "skip85") { seek(pos + 85); osd("Заставка пропущена"); }
+    else if (a === "skip85") {
+      // Точное время заставки знает YummyAnime; иначе — стандартные 85 секунд
+      const op = eps[idx].opening;
+      seek(op?.stop && pos < op.stop ? op.stop : pos + 85);
+      osd("Заставка пропущена");
+    }
     else if (a === "eps") {
       const list = $(".kplist");
       list.innerHTML = episodeList(opts, idx);
@@ -799,6 +893,7 @@ function kodikPlayer(root, opts) {
     else if (a === "dub") m.dub();
     else if (a === "seasons") m.seasons();
     else if (a === "fs") { const fill = !root.classList.contains("zoom-fill"); zoom(fill); osd(fill ? "На весь экран" : "Весь кадр"); }
+    else if (a === "sleep") sleepMenu(osd);
   };
   $(".kplist").addEventListener("click", (ev) => {
     const it = ev.target.closest("[data-i]");
@@ -808,10 +903,12 @@ function kodikPlayer(root, opts) {
     load(+it.dataset.i, null);
   });
   load(idx, startPos);
+  const sleepTimer = setInterval(() => sleepTick(root, () => { cmd({ method: "pause" }); playing = false; render(); }, osd), 1000);
   zoom(store.setting("zoomFill", false));
   poke();
   return { destroy() {
-    save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); window.removeEventListener("message", onMsg);
+    save(true); clearInterval(countTimer); clearInterval(watchdog); clearTimeout(hideTimer); clearInterval(sleepTimer);
+    window.removeEventListener("message", onMsg);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("online", onNet); navigator.connection?.removeEventListener?.("change", onNet);
     frame.src = "about:blank";

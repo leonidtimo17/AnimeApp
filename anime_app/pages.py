@@ -14,7 +14,7 @@ from .franchise import Franchise, is_movie, upcoming_episodes
 from .sources import is_external_id, norm, resume_target
 from .icons import icon, toggle_icon
 from .theme import ACCENT, MUTED, TEXT
-from .images import cover, rounded
+from .images import cover, episode_thumb, rounded
 from .widgets import (
     CardGrid, CardRow, ExpandingLabel, FlowLayout, clear_layout, icon_label, label,
 )
@@ -519,41 +519,44 @@ class EpisodeTile(QFrame):
     clicked = Signal(dict)
     menu_requested = Signal(dict, object)
 
-    def __init__(self, ep, prog, current=False, title=None, missing_note=None):
+    W, TH = 232, 130  # ширина плитки и высота кадра (16:9)
+
+    def __init__(self, ep, prog, current=False, title=None, missing_note=None, images=None, preview=None, poster=None):
         super().__init__()
         self.ep = ep
         self.setObjectName("Episode")
         self.setProperty("current", current)
         self.setProperty("missing", bool(missing_note))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(210, 86)
+        self.setFixedSize(self.W, self.TH + 58)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setContentsMargins(1, 1, 1, 8)
         lay.setSpacing(3)
-        top = QHBoxLayout()
-        top.addWidget(label(title or f"{fmt_ordinal(ep.get('ordinal'))} серия", "CardTitle"))
-        top.addStretch(1)
+        # Кадр из серии; если его нет — затемнённый постер тайтла с крупным номером
+        number = fmt_ordinal(ep.get("ordinal"))
         watched = bool(prog and prog["watched"])
-        if watched:
-            top.addWidget(icon_label("circle-check", "#3fbf6a", 16))
-        lay.addLayout(top)
+        frac = 1.0 if watched else (prog["position"] / prog["duration"] if prog and prog["duration"] else 0)
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(self.W - 2, self.TH)
+        lay.addWidget(self.thumb)
+
+        def draw(src):
+            pix = episode_thumb(src, self.W - 2, self.TH, number, not preview, frac, watched, current)
+            self.thumb.setPixmap(rounded(pix, 9))
+        self._draw = draw
+        draw(None)
+        if images and (preview or poster):
+            images.load(preview or poster, self, draw)
         name = ep.get("name") or ep.get("name_english") or ""
+        t = label(title or f"{number} серия", "CardTitle")
+        t.setContentsMargins(11, 4, 11, 0)
+        lay.addWidget(t)
         n = label(missing_note or name or fmt_duration(ep.get("duration")), "CardSub")
         n.setToolTip(missing_note or name)
-        n.setMaximumWidth(182)
+        n.setContentsMargins(11, 0, 11, 0)
+        n.setMaximumWidth(self.W - 2)
         lay.addWidget(n)
         lay.addStretch(1)
-        bar = QProgressBar()
-        bar.setRange(0, 1000)
-        bar.setTextVisible(False)
-        bar.setFixedHeight(4)
-        if watched:
-            bar.setValue(1000)
-        elif prog and prog["duration"]:
-            bar.setValue(int(1000 * prog["position"] / prog["duration"]))
-        else:
-            bar.setValue(0)
-        lay.addWidget(bar)
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -735,8 +738,7 @@ class DetailsPage(Page):
         self.seasons.setSpacing(10)
         self.seasons_scroll.setWidget(seasons_host)
         sb.addWidget(self.seasons_scroll)
-        lay.addWidget(self.seasons_box)
-        self.seasons_box.hide()
+        self.seasons_box.hide()  # добавляется в раскладку ниже, под сериями
 
         ep_head = QHBoxLayout()
         ep_head.setSpacing(12)
@@ -777,6 +779,8 @@ class DetailsPage(Page):
         ub.addWidget(up_host)
         lay.addWidget(self.upcoming_box)
         self.upcoming_box.hide()
+        lay.addSpacing(8)
+        lay.addWidget(self.seasons_box)
         lay.addStretch(1)
 
         self.franchise = getattr(ctx, "franchise", None) or Franchise(ctx.api, ctx.sources, self)
@@ -1012,8 +1016,9 @@ class DetailsPage(Page):
                 if self.release is not rel:
                     return
                 for e in eps:
-                    slot = self.union.setdefault(e["key"], {"ep": e, "groups": set()})
+                    slot = self.union.setdefault(e["key"], {"ep": e, "groups": set(), "preview": None})
                     slot["groups"].add(group)
+                    slot["preview"] = slot["preview"] or e.get("preview")
                 self._render_episodes()
                 self._render_upcoming()
             self.ctx.sources.episodes(rel, dub, ok, lambda _e: None)
@@ -1111,6 +1116,7 @@ class DetailsPage(Page):
         self.notice.setVisible(bool(notice))
         names = {self._group(d): d["name"] for d in self.dubs if d["native"]}
         names["kodik"] = "Kodik"
+        poster = self.ctx.api.poster_url(rel)
         clear_layout(self.ranges)
         if len(shown) > EPISODES_PAGE:
             pages = (len(shown) + EPISODES_PAGE - 1) // EPISODES_PAGE
@@ -1139,7 +1145,9 @@ class DetailsPage(Page):
                 groups = (self.union.get(ep["key"]) or {}).get("groups", set())
                 note = "есть в: " + ", ".join(sorted(names.get(g, g) for g in groups))
             tile = EpisodeTile(ep, progress.get(ep["key"]), current=bool(last and last["episode_id"] == ep["key"]),
-                               title="Смотреть фильм" if movie else None, missing_note=note)
+                               title="Смотреть фильм" if movie else None, missing_note=note, images=self.ctx.images,
+                               preview=ep.get("preview") or (self.union.get(ep["key"]) or {}).get("preview"),
+                               poster=poster)
             tile.clicked.connect(self._play_any)
             tile.menu_requested.connect(self._episode_menu)
             self.episodes.addWidget(tile)

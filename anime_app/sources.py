@@ -3,7 +3,10 @@
 - AniLibria  — своя озвучка, прямые HLS-потоки → встроенный плеер;
 - AnimeVost  — своя озвучка, прямые mp4 → встроенный плеер;
 - AnimeLib   — каталог всех аниме и десятки озвучек/субтитров через плеер Kodik
-               (открывается в окне веб-плеера, прогресс синхронизируется).
+               (открывается в окне веб-плеера, прогресс синхронизируется);
+- YummyAnime — ещё один открытый каталог плееров Kodik: в нём есть тайтлы, скрытые в AnimeLib
+               (лицензионные — «Тетрадь смерти», «Сага о Винланде», фильмы Гибли…);
+- AniSkip    — время заставки и титров, размеченное сообществом.
 
 Все API публичные и бесплатные, ключи не нужны.
 
@@ -11,9 +14,11 @@
     {"key": "12", "ordinal": 12.0, "name": str|None, "duration": сек|None,
      "opening": {...}|None, "ending": {...}|None,
      "streams": {"1080": url, "720": url, "480": url}|None,   # встроенный плеер
-     "animelib_id": int|None}                                 # плеер Kodik
+     "animelib_id": int|None,                                 # плеер Kodik (AnimeLib)
+     "kodik": url|None,                                       # готовая ссылка Kodik (YummyAnime)
+     "preview": url|None}                                     # кадр из серии
 Озвучка:
-    {"id": "anilibria"|"animevost"|"kodik:<team_id>", "name": str,
+    {"id": "anilibria"|"animevost"|"kodik:<team_id>"|"yani:<озвучка>", "name": str,
      "kind": "voice"|"sub", "native": bool}
 """
 import re
@@ -26,6 +31,9 @@ from .api import fmt_ordinal
 ANIMELIB_API = "https://api.cdnlibs.org/api"
 ANIMELIB_HEADERS = {"Site-Id": "5"}
 ANIMEVOST_API = "https://api.animetop.info/v1"
+YANI_API = "https://api.yani.tv"
+ANISKIP_API = "https://api.aniskip.com/v2/skip-times"
+SHIKI_KIND_RANK = {"tv": 0, "movie": 1, "ona": 2, "ova": 3, "tv_special": 4, "special": 5}
 ANIMELIB_OFFSET = 100_000_000  # id тайтлов из AnimeLib (нет на AniLibria)
 SHIKI_OFFSET = 200_000_000     # id тайтлов из каталога Shikimori (нет на AniLibria)
 SHIKI = "https://shikimori.io"
@@ -99,7 +107,15 @@ def strip_bbcode(text):
 
 
 def has_streams(ep) -> bool:
-    return bool(ep.get("streams") or ep.get("animelib_id"))
+    return bool(ep.get("streams") or ep.get("animelib_id") or ep.get("kodik"))
+
+
+def same_dub(a, b) -> bool:
+    """Одна команда в разных каталогах пишется по-разному: «Дублированный»/«Дублированная», «2x2»/«2×2»."""
+    x, y = norm((a or "").replace("×", "x")), norm((b or "").replace("×", "x"))
+    if x == y:
+        return True
+    return min(len(x), len(y)) >= 5 and (x.startswith(y) or y.startswith(x) or x[:8] == y[:8])
 
 
 def _ordinal(value, fallback):
@@ -120,9 +136,18 @@ def anilibria_episodes(release):
         eps.append({
             "key": fmt_ordinal(o), "ordinal": o, "name": e.get("name") or e.get("name_english"),
             "duration": e.get("duration"), "opening": e.get("opening"), "ending": e.get("ending"),
-            "streams": streams, "animelib_id": None,
+            "streams": streams, "animelib_id": None, "preview": _al_preview(e.get("preview")),
         })
     return eps
+
+
+def _al_preview(pv):
+    """Кадр серии AniLibria: относительный путь → полный адрес."""
+    pv = pv or {}
+    path = (pv.get("optimized") or {}).get("preview") or pv.get("preview") or pv.get("src")
+    if not path:
+        return None
+    return path if path.startswith("http") else "https://anilibria.top" + path
 
 
 class Sources(QObject):
@@ -207,9 +232,16 @@ class Sources(QObject):
 
     # ================================================================ Shikimori (полный каталог)
     def shiki_search(self, query, on_ok, on_err=None):
+        """Порядок: точное совпадение названия → сериалы, фильмы, потом спешлы → по дате выхода.
+        (Сам Shikimori при поиске ставит первыми короткие спешлы, например у «Re:Zero».)"""
+        key = title_key(query)
+
         def ok(items):
-            on_ok([x for x in items or [] if x.get("kind") not in ("music", "pv", "cm")])
-        self.api.fetch(f"{SHIKI}/api/animes", {"search": query, "limit": 30}, ok, on_err, cache_ttl=3600)
+            items = [x for x in items or [] if x.get("kind") not in ("music", "pv", "cm")]
+            items.sort(key=lambda x: (key not in (title_key(x.get("russian")), title_key(x.get("name"))),
+                                      SHIKI_KIND_RANK.get(x.get("kind"), 6), x.get("aired_on") or "9999"))
+            on_ok(items)
+        self.api.fetch(f"{SHIKI}/api/animes", {"search": query, "limit": 50}, ok, on_err, cache_ttl=3600)
 
     @staticmethod
     def shiki_item(x) -> dict:
@@ -273,10 +305,88 @@ class Sources(QObject):
                     continue
                 o = _ordinal(it.get("name"), i + 1)
                 eps.append({"key": fmt_ordinal(o), "ordinal": o, "name": None, "duration": None,
-                            "opening": None, "ending": None, "streams": streams, "animelib_id": None})
+                            "opening": None, "ending": None, "streams": streams, "animelib_id": None,
+                            "preview": it.get("preview")})
             eps.sort(key=lambda e: e["ordinal"])
             on_ok(eps)
         self.api.fetch(f"{ANIMEVOST_API}/playlist", None, ok, on_err, form={"id": vost_id}, cache_ttl=900)
+
+    # ================================================================ YummyAnime
+    def _find_yani(self, release, cb):
+        """id тайтла в YummyAnime: сверяем по id Shikimori, без него — по названию и году."""
+        sid = (release.get("shikimori") or {}).get("id")
+        keys = self._match_key(release)
+        queries = []
+        for q in [(release.get("name") or {}).get("main")] + search_queries(release):
+            if q and q not in queries:
+                queries.append(q)
+        queries = queries[:4]
+
+        def attempt(i):
+            if i >= len(queries):
+                cb(None)
+                return
+
+            def ok(d):
+                for x in (d or {}).get("response") or []:
+                    if sid:
+                        hit = (x.get("remote_ids") or {}).get("shikimori_id") == sid
+                    else:
+                        year = release.get("year")
+                        hit = title_key(x.get("title")) in keys and (not year or abs((x.get("year") or 0) - year) <= 1)
+                    if hit:
+                        cb(x.get("anime_id"))
+                        return
+                attempt(i + 1)
+            self.api.fetch(f"{YANI_API}/search", {"q": queries[i], "limit": 20}, ok, lambda _e: attempt(i + 1),
+                           cache_ttl=3600)
+        attempt(0)
+
+    def _yani_dubs(self, anime_id, cb):
+        """Серии по озвучкам: {"yani:<озвучка>": {"name", "kind", "eps"}}. Только плеер Kodik — у него есть API."""
+        def ok(d):
+            out = {}
+            for v in (d or {}).get("response") or []:
+                data = v.get("data") or {}
+                if "kodik" not in (data.get("player") or "").lower() or not v.get("iframe_url"):
+                    continue
+                name = re.sub(r"^Озвучка\s+", "", data.get("dubbing") or "", flags=re.I).strip() or "Kodik"
+                g = out.setdefault(f"yani:{name}", {"name": name, "eps": [],
+                                                    "kind": "sub" if "субтитр" in name.lower() else "voice"})
+                o = _ordinal(v.get("number"), len(g["eps"]) + 1)
+                if any(e["ordinal"] == o for e in g["eps"]):
+                    continue
+                url = v["iframe_url"]
+                op = (v.get("skips") or {}).get("opening") or {}
+                g["eps"].append({
+                    "key": fmt_ordinal(o), "ordinal": o, "name": None, "duration": v.get("duration"),
+                    "opening": {"start": op["time"], "stop": op["time"] + op["length"]} if op.get("length") else None,
+                    "ending": None, "streams": None, "animelib_id": None, "preview": None,
+                    "kodik": ("https:" + url) if url.startswith("//") else url,
+                })
+            for g in out.values():
+                g["eps"].sort(key=lambda e: e["ordinal"])
+            cb(out)
+        self.api.fetch(f"{YANI_API}/anime/{anime_id}/videos", None, ok, lambda _e: cb({}), cache_ttl=1800)
+
+    # ================================================================ AniSkip
+    def skip_times(self, sid, ordinal, duration_s, cb):
+        """cb({"opening": {start, stop}, "ending": {...}}) или cb(None). Ключ AniSkip — id MyAnimeList = id Shikimori;
+        длительность передаём, чтобы получить разметку под эту версию видео."""
+        if not sid or not duration_s or duration_s < 60 or float(ordinal) != int(float(ordinal)):
+            cb(None)
+            return
+
+        def ok(d):
+            res = {}
+            for r in (d or {}).get("results") or [] if (d or {}).get("found") else []:
+                k = "opening" if r.get("skipType") == "op" else "ending"
+                iv = r.get("interval") or {}
+                res.setdefault(k, {"start": iv.get("startTime"), "stop": iv.get("endTime")})
+            cb(res or None)
+        self.api.fetch(f"{ANISKIP_API}/{sid}/{int(float(ordinal))}",
+                       {"types": ["op", "ed"], "episodeLength": round(duration_s)}, ok, lambda _e: cb(None),
+                       cache_ttl=7 * 86400)
 
     # ================================================================ matching
     def _match_key(self, release):
@@ -338,7 +448,7 @@ class Sources(QObject):
             return
         self._pending[rid] = [callback]
 
-        state = {"dubs": [], "matches": {}, "left": 2}
+        state = {"dubs": [], "matches": {}, "left": 3}
         if anilibria_episodes(release):
             state["dubs"].append({"id": "anilibria", "name": "AniLibria", "kind": "voice", "native": True})
             self._episodes[(rid, "anilibria")] = anilibria_episodes(release)
@@ -354,6 +464,10 @@ class Sources(QObject):
 
         def done():
             state["left"] -= 1
+            # YummyAnime добавляем последним, когда AnimeVost и AnimeLib уже ответили, — чтобы не задвоить команды
+            if state["left"] == 1 and "yani_add" in state:
+                state.pop("yani_add")()
+                return
             publish(state["left"] == 0)
 
         def vost(vost_id):
@@ -409,8 +523,22 @@ class Sources(QObject):
 
             self._al("/episodes", eps_ok, lambda _e: done(), {"anime_id": slug})
 
+        def yani(groups):
+            state["matches"]["yani"] = groups or {}
+
+            def add():
+                for gid, g in (groups or {}).items():
+                    if g["eps"] and not any(same_dub(d["name"], g["name"]) for d in state["dubs"]):
+                        state["dubs"].append({"id": gid, "name": g["name"], "kind": g["kind"], "native": False})
+                done()
+            if state["left"] > 1:
+                state["yani_add"] = add  # ждём остальные источники
+            else:
+                add()
+
         self._find_animevost(release, vost)
         self._find_animelib(release, animelib)
+        self._find_yani(release, lambda aid: self._yani_dubs(aid, yani) if aid else yani({}))
         publish(False)
 
     @staticmethod
@@ -445,8 +573,28 @@ class Sources(QObject):
             self._vost_episodes(matches["animevost"], store, on_err)
         elif dub["id"].startswith("kodik:"):
             store([dict(e) for e in matches.get("animelib_eps") or []])
+        elif dub["id"].startswith("yani:"):
+            store([dict(e) for e in ((matches.get("yani") or {}).get(dub["id"]) or {}).get("eps", [])])
         elif on_err:
             on_err("Источник недоступен")
+
+    def previews(self, release, dubs, cb):
+        """Кадры серий со всех «родных» источников: {ключ серии: url} (у Kodik картинок нет)."""
+        native = [d for d in dubs if d["native"]]
+        out, left = {}, {"n": len(native)}
+        if not native:
+            cb(out)
+            return
+
+        def got(eps):
+            for e in eps:
+                if e.get("preview"):
+                    out.setdefault(e["key"], e["preview"])
+            left["n"] -= 1
+            if left["n"] == 0:
+                cb(out)
+        for d in native:
+            self.episodes(release, d, got, lambda _e: got([]))
 
     # ================================================================ choice
     def choose(self, release, dubs):

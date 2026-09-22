@@ -5,12 +5,14 @@
 - «Следующая серия» с обратным отсчётом на титрах;
 - выбор качества без потери позиции, скорость, громкость;
 - список серий внутри плеера, полноэкранный режим и «картинка в картинке»;
-- горячие клавиши, автоскрытие интерфейса, всплывающие подсказки.
+- горячие клавиши, автоскрытие интерфейса, всплывающие подсказки;
+- разметка заставки и титров от AniSkip, если источник её не дал;
+- таймер сна, скорость 2x пока зажата кнопка мыши, масштаб «весь кадр / заполнить экран».
 """
 import time
 
 from PySide6.QtCore import QPointF, QRectF, QSize, QSizeF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
@@ -22,11 +24,41 @@ from .api import episode_label, fmt_ordinal, release_title
 from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
 from .sources import resume_target
 from .icons import icon as fa_icon
+from .images import episode_thumb
 from .theme import ACCENT
 
 SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 NEXT_COUNTDOWN = 10
-HIDE_DELAY_MS = 2800
+HIDE_DELAY_MS = 5000
+HOLD_MS = 450            # удержание кнопки мыши на видео — скорость 2x
+THUMB_W, THUMB_H = 128, 72
+
+# Таймер сна: общий для обоих плееров и сохраняется при смене серии/озвучки.
+# until — время (time.time()), когда остановить; episode — остановить после текущей серии.
+SLEEP = {"until": 0.0, "min": 0, "episode": False}
+
+
+def sleep_active():
+    return SLEEP["episode"] or SLEEP["until"] > time.time()
+
+
+def fill_sleep_menu(menu, on_change):
+    """Меню таймера сна. on_change(text) — показать подсказку."""
+    menu.clear()
+    left = SLEEP["until"] - time.time()
+    if left > 0:
+        menu.addSection(f"Осталось {int(left // 60) + 1} мин")
+
+    def pick(minutes, episode):
+        SLEEP.update(min=minutes, episode=episode, until=time.time() + minutes * 60 if minutes else 0.0)
+        on_change(f"Таймер сна: остановлю через {minutes} мин" if minutes
+                  else "Остановлю после этой серии" if episode else "Таймер сна выключен")
+    items = [("Выключен", 0, False, not sleep_active()), ("После этой серии", 0, True, SLEEP["episode"])]
+    items += [(f"Через {m} минут", m, False, left > 0 and SLEEP["min"] == m) for m in (15, 30, 45, 60, 90)]
+    for text, minutes, episode, on in items:
+        act = menu.addAction(text, lambda m=minutes, e=episode: pick(m, e))
+        act.setCheckable(True)
+        act.setChecked(on)
 I_PLAY, I_PAUSE, I_PREV, I_NEXT = "play", "pause", "backward-step", "forward-step"
 I_VOL1, I_VOL3, I_MUTE = "volume-low", "volume-high", "volume-xmark"
 I_FULL, I_UNFULL, I_LIST, I_SETTINGS, I_BACK, I_PIP = (
@@ -206,6 +238,7 @@ class VideoView(QGraphicsView):
         self.item = QGraphicsVideoItem()
         self.item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatio)
         self.scene_.addItem(self.item)
+        self.fill = False
         self.setBackgroundBrush(QColor("black"))
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -215,6 +248,12 @@ class VideoView(QGraphicsView):
         self.viewport().setMouseTracking(True)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+
+    def set_fill(self, fill):
+        """«Заполнить экран» — без чёрных полос, края кадра обрезаются; иначе виден весь кадр."""
+        self.fill = fill
+        self.item.setAspectRatioMode(Qt.AspectRatioMode.KeepAspectRatioByExpanding if fill
+                                     else Qt.AspectRatioMode.KeepAspectRatio)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -273,6 +312,7 @@ class PlayerWindow(QWidget):
         self.audio.setMuted(self.db.setting("muted", False))
         self.player.setAudioOutput(self.audio)
         self.view = VideoView(self)
+        self.view.set_fill(self.db.setting("zoom_fill", False))
         self.player.setVideoOutput(self.view.item)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -297,6 +337,16 @@ class PlayerWindow(QWidget):
         self.count_timer.timeout.connect(self._tick_countdown)
         self.click_timer = QTimer(self, singleShot=True, interval=230)
         self.click_timer.timeout.connect(self.toggle_play)
+        # Удержание кнопки мыши на видео — 2x, пока держите
+        self.hold_timer = QTimer(self, singleShot=True, interval=HOLD_MS)
+        self.hold_timer.timeout.connect(self._hold_start)
+        self._hold_rate = None
+        # Таймер сна
+        self.sleep_timer = QTimer(self, interval=1000)
+        self.sleep_timer.timeout.connect(self._sleep_tick)
+        self.sleep_timer.start()
+        self._thumbs = {}          # url -> миниатюра для списка серий
+        self._skip_asked = set()   # серии, для которых уже спрашивали AniSkip
 
         # Восстановление после обрыва сети (смена Wi-Fi, включение/выключение VPN):
         # сторож проверяет, что видео действительно идёт, и переподключается, если оно зависло.
@@ -401,6 +451,10 @@ class PlayerWindow(QWidget):
         self.speed_btn = self._btn("1x", "Скорость воспроизведения", lambda: None, row, icon=False)
         self.speed_btn.setMenu(self._speed_menu())
         self.quality_btn = self._btn("HD", "Качество", lambda: None, row, icon=False)
+        self.sleep_btn = self._btn("moon", "Таймер сна", lambda: None, row)
+        self.sleep_menu = QMenu(self)
+        self.sleep_menu.aboutToShow.connect(lambda: fill_sleep_menu(self.sleep_menu, lambda t: self.show_osd(t, 1800)))
+        self.sleep_btn.setMenu(self.sleep_menu)
         self.settings_btn = self._btn(I_SETTINGS, "Настройки", lambda: None, row)
         self.settings_btn.setMenu(self._settings_menu())
         self._btn(I_LIST, "Список серий (E)", self.toggle_episodes, row)
@@ -438,6 +492,8 @@ class PlayerWindow(QWidget):
         # Список серий
         self.ep_list = QListWidget(self.view)
         self.ep_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.ep_list.setIconSize(QSize(THUMB_W, THUMB_H))
+        self.ep_list.setSpacing(2)
         self.ep_list.itemClicked.connect(lambda it: self.play_index(it.data(Qt.ItemDataRole.UserRole)))
         self.ep_list.hide()
 
@@ -484,6 +540,10 @@ class PlayerWindow(QWidget):
         a2.setCheckable(True)
         a2.setChecked(self.autonext)
         a2.toggled.connect(lambda v: (setattr(self, "autonext", v), self.db.set_setting("autoplay_next", v)))
+        self.fill_action = menu.addAction("Заполнить экран, без чёрных полос (Z)")
+        self.fill_action.setCheckable(True)
+        self.fill_action.setChecked(self.view.fill if hasattr(self, "view") else False)
+        self.fill_action.triggered.connect(lambda _v: self.toggle_fill())
         menu.addSeparator()
         menu.addAction("Горячие клавиши…", self._show_hotkeys)
         return menu
@@ -515,7 +575,7 @@ class PlayerWindow(QWidget):
         bh = self.bottom.sizeHint().height()
         self.bottom.setGeometry(0, h - bh, w, bh)
         for widget in (self.speed_btn, self.quality_btn, self.settings_btn, self.volume,
-                       self.prev_btn, self.dub_btn):
+                       self.prev_btn, self.dub_btn, self.sleep_btn):
             widget.setVisible(not compact)
         panel_w = min(360, int(w * 0.4))
         self.ep_list.setGeometry(w - panel_w, 0, panel_w, h)
@@ -564,18 +624,35 @@ class PlayerWindow(QWidget):
     def _fill_episode_list(self):
         self.ep_list.clear()
         progress = self.db.progress_for(self.release["id"])
+        poster = self.ctx.api.poster_url(self.release)
         for i, ep in enumerate(self.episodes):
-            prog = progress.get(ep["key"])
-            item = QListWidgetItem(self._ep_icon(bool(prog and prog["watched"])), episode_label(ep))
+            prog = progress.get(ep["key"]) or {}
+            item = QListWidgetItem(episode_label(ep).replace(" — ", "\n", 1))
             item.setData(Qt.ItemDataRole.UserRole, i)
+            item.setSizeHint(QSize(0, THUMB_H + 12))
             self.ep_list.addItem(item)
+            url = ep.get("preview") or poster
+            frac = 1.0 if prog.get("watched") else (prog["position"] / prog["duration"] if prog.get("duration") else 0)
+            self._set_thumb(item, url, fmt_ordinal(ep.get("ordinal")), not ep.get("preview"), frac, bool(prog.get("watched")))
         self.ep_list.setCurrentRow(self.index)
 
-    @staticmethod
-    def _ep_icon(watched):
-        if watched:
-            return fa_icon("circle-check", "#3fbf6a", 16)
-        return fa_icon("circle-play", "#8a8a96", 16, regular=True)
+    def _set_thumb(self, item, url, number, fallback, frac, watched):
+        """Миниатюра серии: кадр (или затемнённый постер с номером), полоска прогресса, галочка."""
+        def draw(src):
+            item.setIcon(QPixmap(episode_thumb(src, THUMB_W, THUMB_H, number, fallback, frac, watched, radius=6)))
+        draw(None)
+        if url:
+            cached = self._thumbs.get(url)
+            if cached is not None:
+                draw(cached)
+            else:
+                def got(pix, url=url):
+                    self._thumbs[url] = pix
+                    try:
+                        draw(pix)
+                    except RuntimeError:  # список уже перестроен
+                        pass
+                self.ctx.images.load(url, self, got)
 
     def current_episode(self):
         return self.episodes[self.index] if 0 <= self.index < len(self.episodes) else None
@@ -860,6 +937,27 @@ class PlayerWindow(QWidget):
     # ============================================================ signals
     def _on_duration(self, d):
         self.seek.setRange(0, max(0, d))
+        ep = self.current_episode()
+        sid = ((self.release or {}).get("shikimori") or {}).get("id")
+        if not ep or d < 60_000 or not sid:
+            return
+        have_op = (ep.get("opening") or {}).get("stop")
+        have_ed = (ep.get("ending") or {}).get("start")
+        key = (self.release["id"], self.dub_name, ep["key"])
+        if (have_op and have_ed) or key in self._skip_asked:
+            return
+        self._skip_asked.add(key)
+
+        def got(res, ep=ep):
+            if not res:
+                return
+            if not (ep.get("opening") or {}).get("stop") and res.get("opening"):
+                ep["opening"] = res["opening"]
+            if not (ep.get("ending") or {}).get("start") and res.get("ending"):
+                ep["ending"] = res["ending"]
+            if ep is self.current_episode():
+                self._update_marks()
+        self.ctx.sources.skip_times(sid, ep.get("ordinal"), d / 1000, got)
 
     def _on_position(self, pos):
         if not self.seek.dragging:
@@ -888,7 +986,7 @@ class PlayerWindow(QWidget):
             in_credits = pos >= end["start"] * 1000
         else:
             in_credits = dur > 300_000 and dur - pos <= 45_000
-        show_next = has_next and in_credits and not self.next_cancelled and dur > 0
+        show_next = has_next and in_credits and not self.next_cancelled and dur > 0 and not SLEEP["episode"]
         if show_next and not self.next_box.isVisible():
             self.next_box.show()
             if self.autonext:
@@ -920,7 +1018,10 @@ class PlayerWindow(QWidget):
             self.player.setPosition(int(pos))
         if status == S.EndOfMedia:
             self.save_progress(force_end=True)
-            if self.autonext and self.index < len(self.episodes) - 1 and not self.next_cancelled:
+            if SLEEP["episode"]:
+                SLEEP["episode"] = False
+                self.show_osd("Таймер сна — серия закончилась. Спокойной ночи!", 4000)
+            elif self.autonext and self.index < len(self.episodes) - 1 and not self.next_cancelled:
                 self.next_episode()
             elif self.index == len(self.episodes) - 1:
                 self._maybe_complete()
@@ -1103,6 +1204,42 @@ class PlayerWindow(QWidget):
         self._layout_overlay()
         self.view.viewport().setCursor(Qt.CursorShape.BlankCursor)
 
+    def toggle_fill(self):
+        fill = not self.view.fill
+        self.view.set_fill(fill)
+        self.db.set_setting("zoom_fill", fill)
+        self.fill_action.setChecked(fill)
+        self.show_osd("Заполнить экран" if fill else "Весь кадр")
+
+    def _sleep_tick(self):
+        on = sleep_active()
+        if self.sleep_btn.property("on") != on:
+            self.sleep_btn.setProperty("on", on)
+            self.sleep_btn.setIcon(fa_icon("moon", ACCENT if on else "white", ICON_SIZE))
+        if SLEEP["until"] and time.time() >= SLEEP["until"]:
+            SLEEP.update(until=0.0, min=0)
+            if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.player.pause()
+                self.save_progress()
+                self.show_osd("Таймер сна — видео остановлено. Спокойной ночи!", 4000)
+
+    def _hold_start(self):
+        if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState or self.pip:
+            return
+        self._hold_rate = self.player.playbackRate()
+        self.player.setPlaybackRate(2.0)
+        self.show_osd("▶▶  Скорость 2x — пока держите кнопку мыши", 60_000)
+
+    def _hold_end(self):
+        """True, если отпустили после ускорения (тогда клик не считается паузой)."""
+        self.hold_timer.stop()
+        if self._hold_rate is None:
+            return False
+        self.player.setPlaybackRate(self._hold_rate)
+        self._hold_rate = None
+        self.osd.hide()
+        return True
+
     def toggle_episodes(self):
         self.ep_list.setVisible(not self.ep_list.isVisible())
         if self.ep_list.isVisible():
@@ -1166,7 +1303,8 @@ class PlayerWindow(QWidget):
         self.show_osd(
             "Пробел/K — пауза   ←/→ — 10 с   ↑/↓ — громкость\n"
             "F — полный экран   M — звук   N/P — серии   S — пропустить заставку\n"
-            "[ / ] — скорость   E — серии   I — мини-плеер   0–9 — перейти в %",
+            "[ / ] — скорость   E — серии   I — мини-плеер   Z — заполнить экран   0–9 — перейти в %\n"
+            "Зажать кнопку мыши на видео — скорость 2x",
             6000,
         )
 
@@ -1179,15 +1317,19 @@ class PlayerWindow(QWidget):
                 if delta.manhattanLength() > 4:
                     self.drag_origin = (self.drag_origin[0], self.drag_origin[1], True)
                     self.move(self.drag_origin[1] + delta)
+                    self.hold_timer.stop()
             self.poke()
         elif t == e.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
             if self.ep_list.isVisible():
                 self.ep_list.hide()
                 return True
             self.drag_origin = (e.globalPosition().toPoint(), self.pos(), False)
+            self.hold_timer.start()
         elif t == e.Type.MouseButtonRelease and e.button() == Qt.MouseButton.LeftButton:
             moved = self.drag_origin and self.drag_origin[2]
             self.drag_origin = None
+            if self._hold_end():
+                return True
             if not moved:
                 self.click_timer.start()
             return True
@@ -1227,6 +1369,8 @@ class PlayerWindow(QWidget):
             self.toggle_episodes()
         elif k == K.Key_I:
             self.toggle_pip()
+        elif k == K.Key_Z:
+            self.toggle_fill()
         elif k == K.Key_BracketRight:
             self.change_speed(1)
         elif k == K.Key_BracketLeft:

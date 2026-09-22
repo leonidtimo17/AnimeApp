@@ -95,6 +95,52 @@ def cover(pix: QPixmap, w: int, h: int) -> QPixmap:
     return scaled.copy(x, y, w, h)
 
 
+def episode_thumb(src, w, h, number, fallback, frac=0.0, watched=False, current=False, radius=0):
+    """Миниатюра серии: кадр из серии (или затемнённый постер с крупным номером), номер,
+    галочка «просмотрено», значок «сейчас», полоска прогресса снизу."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QColor, QPainter
+    from .icons import icon
+    from .theme import ACCENT
+    ok = src is not None and not src.isNull()
+    pix = cover(src, w, h) if ok else QPixmap(w, h)
+    if not ok:
+        pix.fill(QColor("#24242c"))
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    f = p.font()
+    f.setBold(True)
+    if fallback:
+        p.fillRect(pix.rect(), QColor(10, 10, 14, 165))
+        f.setPixelSize(max(18, h // 3))
+        p.setFont(f)
+        p.setPen(QColor("white"))
+        p.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, number)
+    elif h >= 100:
+        f.setPixelSize(13)
+        p.setFont(f)
+        rect = p.fontMetrics().boundingRect(number).adjusted(-8, -3, 8, 3)
+        rect.moveTopLeft(QPoint(8, 8))
+        p.setBrush(QColor(0, 0, 0, 180))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(rect, 6, 6)
+        p.setPen(QColor("white"))
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, number)
+    s = 18 if h < 100 else 20
+    if watched:
+        p.drawPixmap(w - s - 6, 6, icon("circle-check", "#3fbf6a", s).pixmap(s, s))
+    elif current:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(ACCENT))
+        p.drawEllipse(w - s - 10, 6, s + 4, s + 4)
+        p.drawPixmap(w - s - 6, 10, icon("play", "white", s - 4).pixmap(s - 4, s - 4))
+    p.fillRect(0, h - 4, w, 4, QColor(255, 255, 255, 50))
+    if frac:
+        p.fillRect(0, h - 4, int(w * min(1.0, frac)), 4, QColor(ACCENT))
+    p.end()
+    return rounded(pix, radius) if radius else pix
+
+
 def rounded(pix: QPixmap, radius: int) -> QPixmap:
     from PySide6.QtGui import QPainter, QPainterPath
     out = QPixmap(pix.size())

@@ -7,6 +7,7 @@ const SHIKI = "https://shikimori.io";
 const ANIMELIB = "https://api.cdnlibs.org/api";
 const ANIMELIB_H = { "Site-Id": "5" };
 const VOST = "https://api.animetop.info/v1";
+const YANI = "https://api.yani.tv";
 const KINDS = { tv: "ТВ", movie: "Фильм", ova: "OVA", ona: "ONA", special: "Спешл", tv_special: "ТВ-спешл" };
 const RATINGS = { g: "0+", pg: "6+", pg_13: "13+", r: "16+", r_plus: "18+", rx: "18+" };
 
@@ -85,9 +86,16 @@ export function shikiItem(x) {
     badge: x.status === "anons" ? "Анонс" : null, release: rel };
 }
 
+const KIND_RANK = { tv: 0, movie: 1, ona: 2, ova: 3, tv_special: 4, special: 5 };
 export async function shikiSearch(q) {
-  const items = await api.request(`${SHIKI}/api/animes`, { params: { search: q, limit: 30 }, ttl: 3600 });
-  return (items || []).filter((x) => !["music", "pv", "cm"].includes(x.kind));
+  const items = await api.request(`${SHIKI}/api/animes`, { params: { search: q, limit: 50 }, ttl: 3600 });
+  const key = titleKey(q);
+  const exact = (x) => ([x.russian, x.name].some((n) => titleKey(n) === key) ? 0 : 1);
+  return (items || []).filter((x) => !["music", "pv", "cm"].includes(x.kind))
+    .map((x, i) => ({ x, i }))
+    .sort((a, b) => exact(a.x) - exact(b.x) || (KIND_RANK[a.x.kind] ?? 6) - (KIND_RANK[b.x.kind] ?? 6)
+      || (a.x.aired_on || "9999").localeCompare(b.x.aired_on || "9999") || a.i - b.i)
+    .map(({ x }) => x);
 }
 
 export async function shikiRelease(id) {
@@ -191,6 +199,70 @@ async function vostEpisodes(id) {
   return eps.sort((a, b) => a.ordinal - b.ordinal);
 }
 
+// ------------------------------------------------------------------ YummyAnime
+// Открытый каталог с плеерами Kodik по каждой озвучке; есть тайтлы, скрытые в AnimeLib
+// (лицензионные: «Тетрадь смерти», «Сага о Винланде», фильмы Гибли…). Сверяем по id Shikimori.
+const yaniSearch = (q) => api.request(`${YANI}/search`, { params: { q, limit: 20 }, ttl: 3600 })
+  .then((d) => d?.response || []).catch(() => []);
+async function findYani(rel) {
+  const sid = rel.shikimori?.id;
+  const keys = matchKeys(rel);
+  const queries = [rel.name?.main, ...searchQueries(rel)].filter((q, i, a) => q && a.indexOf(q) === i);
+  for (const q of queries.slice(0, 4)) {
+    const items = await yaniSearch(q);
+    const hit = sid ? items.find((x) => x.remote_ids?.shikimori_id === sid)
+      : items.find((x) => keys.has(titleKey(x.title)) && (!rel.year || Math.abs(x.year - rel.year) <= 1));
+    if (hit) return hit.anime_id;
+  }
+  return null;
+}
+const yaniDubName = (s) => (s || "").replace(/^Озвучка\s+/i, "").trim() || "Kodik";
+/** Серии YummyAnime по озвучкам: {"yani:<озвучка>": {name, kind, eps}} — только плеер Kodik (у него есть API управления). */
+async function yaniDubs(id) {
+  const d = await api.request(`${YANI}/anime/${id}/videos`, { ttl: 1800 });
+  const out = {};
+  for (const v of d?.response || []) {
+    if (!/kodik/i.test(v.data?.player || "") || !v.iframe_url) continue;
+    const name = yaniDubName(v.data.dubbing);
+    const g = (out[`yani:${name}`] ||= { name, kind: /субтитр/i.test(name) ? "sub" : "voice", eps: [] });
+    const o = ordinal(v.number, g.eps.length + 1);
+    if (g.eps.some((e) => e.ordinal === o)) continue;
+    const op = v.skips?.opening;
+    g.eps.push({ key: fmtOrd(o), ordinal: o, name: null, streams: null, animelib: null,
+      kodik: v.iframe_url.startsWith("//") ? "https:" + v.iframe_url : v.iframe_url,
+      opening: op?.length ? { start: op.time, stop: op.time + op.length } : null });
+  }
+  for (const g of Object.values(out)) g.eps.sort((a, b) => a.ordinal - b.ordinal);
+  return out;
+}
+/** Одна и та же команда в разных каталогах пишется по-разному: «Дублированный» / «Дублированная», «2x2» / «2×2». */
+const sameDub = (a, b) => {
+  const x = norm(a.replace(/×/g, "x")), y = norm(b.replace(/×/g, "x"));
+  return x === y || (Math.min(x.length, y.length) >= 5 && (x.startsWith(y) || y.startsWith(x) || x.slice(0, 8) === y.slice(0, 8)));
+};
+
+// ------------------------------------------------------------------ AniSkip
+// Время заставки и титров, размеченное сообществом (api.aniskip.com). Ключ — id MyAnimeList, он совпадает с id Shikimori.
+// Длительность серии передаём, чтобы получить разметку именно под такую версию видео.
+const skipCache = {};
+export async function skipTimes(sid, ordinal, duration) {
+  if (!sid || !Number.isInteger(+ordinal) || !(duration > 60)) return null;
+  const key = `${sid}|${ordinal}|${Math.round(duration)}`;
+  if (key in skipCache) return skipCache[key];
+  let res = null;
+  try {
+    const d = await api.request(`https://api.aniskip.com/v2/skip-times/${sid}/${+ordinal}`,
+      { params: { types: ["op", "ed"], episodeLength: Math.round(duration) }, ttl: 7 * 86400 });
+    for (const r of d?.found ? d.results || [] : []) {
+      const k = r.skipType === "op" ? "opening" : "ending";
+      res ||= {};
+      if (!res[k]) res[k] = { start: r.interval.startTime, stop: r.interval.endTime };
+    }
+  } catch { /* разметки нет */ }
+  skipCache[key] = res;
+  return res;
+}
+
 // ------------------------------------------------------------------ озвучки
 const dubCache = {};
 const epCache = {};
@@ -205,7 +277,8 @@ export async function findDubs(rel) {
     dubs.push({ id: "anilibria", name: "AniLibria", kind: "voice", native: true });
     epCache[`${rel.id}|anilibria`] = al;
   }
-  const [vost, slug] = await Promise.all([findVost(rel).catch(() => null), findAnimeLib(rel).catch(() => null)]);
+  const [vost, slug, yani] = await Promise.all([findVost(rel).catch(() => null), findAnimeLib(rel).catch(() => null),
+    findYani(rel).then((id) => (id ? yaniDubs(id) : null)).catch(() => null)]);
   if (vost) {
     matches.vost = vost;
     dubs.push({ id: "animevost", name: "AnimeVost", kind: "voice", native: true });
@@ -230,6 +303,14 @@ export async function findDubs(rel) {
       const native = dubs.map((d) => norm(d.name));
       for (const d of seen.values()) if (!native.some((n) => norm(d.name).startsWith(n))) dubs.push(d);
     } catch { /* AnimeLib недоступен */ }
+  }
+  // Озвучки YummyAnime, которых нет у других источников
+  if (yani) {
+    matches.yani = yani;
+    for (const [id, g] of Object.entries(yani)) {
+      if (!g.eps.length || dubs.some((d) => sameDub(d.name, g.name))) continue;
+      dubs.push({ id, name: g.name, kind: g.kind, native: false });
+    }
   }
   dubs.sort((a, b) => (a.native === b.native ? 0 : a.native ? -1 : 1) || (a.kind === "sub") - (b.kind === "sub")
     || a.name.localeCompare(b.name));
@@ -262,6 +343,7 @@ export async function episodes(rel, dub) {
   if (dub.id === "anilibria") eps = anilibriaEpisodes(rel);
   else if (dub.id === "animevost" && matches.vost) eps = await vostEpisodes(matches.vost);
   else if (dub.id.startsWith("kodik:")) eps = (matches.animelibEps || []).map((e) => ({ ...e }));
+  else if (dub.id.startsWith("yani:")) eps = (matches.yani?.[dub.id]?.eps || []).map((e) => ({ ...e }));
   epCache[key] = eps;
   return eps;
 }

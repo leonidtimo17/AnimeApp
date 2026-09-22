@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
             self.nav_buttons[key] = btn
             side.addWidget(btn)
         side.addStretch(1)
-        about = QLabel(f"v{APP_VERSION} · AniLibria · AnimeVost · AnimeLib")
+        about = QLabel(f"v{APP_VERSION} · AniLibria · AnimeVost · AnimeLib · YummyAnime")
         about.setObjectName("Muted")
         about.setWordWrap(True)
         about.setStyleSheet("padding: 0 20px; font-size: 12px;")
@@ -197,9 +197,19 @@ class MainWindow(QMainWindow):
                     return
 
                 def eps_ok(eps):
-                    stop()
-                    if self._play_token is token:
+                    def launch(previews):
+                        stop()
+                        if self._play_token is not token:
+                            return
+                        # Кадры серий для списка в плеере — из любой «родной» озвучки, где они есть
+                        for e in eps:
+                            if not e.get("preview") and previews.get(e["key"]):
+                                e["preview"] = previews[e["key"]]
                         self._launch(release, dub, eps, episode_key or None)
+                    if dub["native"]:
+                        self.ctx.sources.previews(release, dubs, launch)
+                    else:
+                        launch({})
 
                 self.ctx.sources.episodes(release, dub, eps_ok,
                                           lambda msg: stop(f"Не удалось загрузить серии: {msg}"))

@@ -10,9 +10,11 @@ Kodik встраивается штатно, через его публичны�
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 
 ANIMELIB_API = "https://api.cdnlibs.org/api"
+ANISKIP_API = "https://api.aniskip.com/v2/skip-times"
 HEADERS = {"User-Agent": "Mozilla/5.0 AnimeApp/1.0", "Site-Id": "5"}
 
 
@@ -33,6 +35,8 @@ class Bridge:
     def source(self, index):
         """Ссылка Kodik для серии и выбранной команды озвучки."""
         ep = self.job["episodes"][index]
+        if ep.get("kodik"):  # готовая ссылка (YummyAnime)
+            return {"src": ep["kodik"], "team": self.job.get("dub"), "fallback": False}
         req = urllib.request.Request(f"{ANIMELIB_API}/episodes/{ep['animelib_id']}", headers=HEADERS)
         try:
             data = json.loads(urllib.request.urlopen(req, timeout=20).read())["data"]
@@ -51,6 +55,31 @@ class Bridge:
             "fallback": not exact,
         }
 
+    def skip_times(self, index, dur):
+        """Разметка заставки/титров от AniSkip (id MyAnimeList = id Shikimori) под длительность этой серии."""
+        ep = self.job["episodes"][index]
+        sid, o = self.job.get("sid"), float(ep.get("ordinal") or 0)
+        if not sid or o != int(o) or not dur or dur < 60:
+            return None
+        q = urllib.parse.urlencode([("types[]", "op"), ("types[]", "ed"), ("episodeLength", round(dur))])
+        try:
+            req = urllib.request.Request(f"{ANISKIP_API}/{sid}/{int(o)}?{q}", headers=HEADERS)
+            data = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        except Exception:  # noqa: BLE001 — разметки нет
+            return None
+        res = {}
+        for r in data.get("results") or [] if data.get("found") else []:
+            iv = r.get("interval") or {}
+            res.setdefault("opening" if r.get("skipType") == "op" else "ending",
+                           {"start": iv.get("startTime"), "stop": iv.get("endTime")})
+        return res or None
+
+    def setting(self, key, value):
+        emit(type="setting", key=key, value=value)
+
+    def sleep(self, until, minutes, episode):
+        emit(type="sleep", until=until, min=minutes, episode=episode)
+
     def progress(self, index, pos, dur):
         ep = self.job["episodes"][index]
         emit(type="progress", key=ep["key"], ordinal=ep["ordinal"], pos=int(pos * 1000), dur=int(dur * 1000))
@@ -66,7 +95,14 @@ font-family:"Segoe UI",sans-serif;overflow:hidden;user-select:none}
 body{display:flex;flex-direction:column}
 .fa{font-family:FA;font-weight:900;font-style:normal}
 #stage{position:relative;flex:1;min-height:0}
-#frame{position:absolute;inset:0;width:100%;height:100%;border:0}
+#frame{position:absolute;inset:0;width:100%;height:100%;border:0;transition:transform .2s}
+#stage{overflow:hidden}
+button.on{color:#ff6a1a}
+#menu{position:absolute;right:16px;bottom:64px;background:#1c1c22;border:1px solid #333;border-radius:10px;padding:6px;
+display:none;min-width:220px;z-index:5}
+#menu div{padding:8px 14px;border-radius:7px;cursor:pointer;font-size:14px}
+#menu div:hover{background:#2c2c35} #menu div.on{color:#ff6a1a} #menu .t{color:#9a9aa6;cursor:default;font-size:12px}
+#menu .t:hover{background:none}
 #msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#9a9aa6;font-size:16px}
 /* Своя панель управления под видео (поверх iframe нельзя: он забирает клики и движения мыши) */
 #panel{background:#101014;border-top:1px solid #24242c;padding:8px 16px 10px}
@@ -112,8 +148,11 @@ padding:10px 20px;font-weight:700;font-size:16px;display:none}
     <select id="eps" title="Серия"></select>
     <div class="sp"></div>
     <span id="ad">Идёт реклама Kodik…</span>
-    <button id="skip" class="ctl" title="Пропустить заставку — вперёд на 85 с (S)"><i class="fa">&#xf04e;</i>&nbsp; Пропустить заставку</button>
+    <button id="skip" class="ctl" title="Пропустить заставку (S)"><i class="fa">&#xf04e;</i>&nbsp; Пропустить заставку</button>
+    <button id="sleep" title="Таймер сна"><i class="fa">&#xf186;</i></button>
+    <button id="zoom" title="Заполнить экран, без чёрных полос (Z)"><i class="fa">&#xf065;</i></button>
   </div>
+  <div id="menu"></div>
 </div>
 <script>
 let job, idx = 0, pos = 0, dur = 0, lastSent = 0, seekTo = 0, timer = null, count = 0, playing = false, dragging = false;
@@ -146,7 +185,7 @@ async function load(i, start){
 }
 function stopCountdown(){ clearInterval(timer); timer = null; $('toast').style.display = 'none'; }
 function countdown(){
-  if (idx >= job.episodes.length - 1 || timer) return;
+  if (idx >= job.episodes.length - 1 || timer || sleep.episode) return;
   count = 10; $('toast').style.display = 'flex'; $('go').textContent = 'Следующая серия через ' + count;
   timer = setInterval(() => { count--; if (count <= 0) { load(idx + 1, 0); return; }
     $('go').textContent = 'Следующая серия через ' + count; }, 1000);
@@ -154,12 +193,23 @@ function countdown(){
 window.addEventListener('message', e => {
   const d = e.data || {};
   if (d.key === 'kodik_player_duration_update') { dur = d.value; render();
+    const ep = job.episodes[idx];
+    if (!(ep.opening && ep.opening.stop) || !(ep.ending && ep.ending.start)) api().skip_times(idx, dur).then(s => {
+      if (!s || job.episodes[idx] !== ep) return;
+      if (!(ep.opening && ep.opening.stop) && s.opening) ep.opening = s.opening;
+      if (!(ep.ending && ep.ending.start) && s.ending) ep.ending = s.ending;
+    });
     if (seekTo > 5) { const s = seekTo; seekTo = 0; setTimeout(() => { cmd({method:'seek', seconds:s}); osd('Продолжаем с ' + fmt(s)); }, 600); } }
   else if (d.key === 'kodik_player_time_update') { pos = d.value; playing = true; started = true; userPaused = false; lastTick = Date.now(); setAd(false); render(); save(false);
-    if (dur > 300 && dur - pos < 40) countdown(); }
+    const ep = job.episodes[idx], op = ep.opening;
+    if (ep.ending && ep.ending.start ? pos >= ep.ending.start : dur > 300 && dur - pos < 40) countdown();
+    if (job.autoskip && op && op.stop && op.start != null && pos >= op.start && pos < op.stop - 2 && !ep._skipped) {
+      ep._skipped = true; seek(op.stop); osd('Заставка пропущена'); } }
   else if (d.key === 'kodik_player_play') { playing = true; userPaused = false; lastTick = Date.now(); render(); }
   else if (d.key === 'kodik_player_pause') { playing = false; userPaused = true; render(); save(true); }
-  else if (d.key === 'kodik_player_video_ended') { pos = dur; playing = false; render(); save(true); countdown(); }
+  else if (d.key === 'kodik_player_video_ended') { pos = dur; playing = false; render(); save(true);
+    if (sleep.episode) { sleep.episode = false; api().sleep(0, 0, false); osd('Таймер сна — серия закончилась. Спокойной ночи!'); }
+    else countdown(); }
   else if (d.event === 'adShown' || d.title === 'vastStarted' || d.key === 'kodik_player_advert_started') setAd(true);
   else if (d.key === 'kodik_player_advert_ended' || d.title === 'currentVastEnded') setAd(false);
 });
@@ -184,7 +234,47 @@ $('next').onclick = () => load(idx + 1, null);
 $('go').onclick = () => load(idx + 1, null);
 $('stay').onclick = () => { clearInterval(timer); timer = null; $('toast').style.display = 'none'; };
 $('eps').onchange = () => load(+$('eps').value, null);
-$('skip').onclick = () => { seek(pos + 85); osd('Заставка пропущена'); };
+// Точное время заставки — от YummyAnime или AniSkip; иначе стандартные 85 секунд
+function skipOpening(){ const op = job.episodes[idx].opening; seek(op && op.stop && pos < op.stop ? op.stop : pos + 85); osd('Заставка пропущена'); }
+$('skip').onclick = skipOpening;
+// --- масштаб: iframe увеличиваем так, чтобы кадр 16:9 закрыл всю область
+let fill = false;
+function applyZoom(){
+  const st = $('stage'), w = st.clientWidth, h = st.clientHeight, vw = Math.min(w, h * 16 / 9), vh = vw * 9 / 16;
+  $('frame').style.transform = fill && vw && vh ? `scale(${Math.max(w / vw, h / vh).toFixed(3)})` : '';
+  $('zoom').innerHTML = fill ? '<i class="fa">&#xf066;</i>' : '<i class="fa">&#xf065;</i>';
+}
+function toggleZoom(){ fill = !fill; applyZoom(); api().setting('zoom_fill', fill); osd(fill ? 'Заполнить экран' : 'Весь кадр'); }
+$('zoom').onclick = toggleZoom;
+window.addEventListener('resize', applyZoom);
+// --- таймер сна
+let sleep = {until: 0, min: 0, episode: false};
+const sleepOn = () => sleep.episode || sleep.until > Date.now();
+function setSleep(min, episode){
+  sleep = {until: min ? Date.now() + min * 60000 : 0, min, episode};
+  api().sleep(sleep.until, min, episode);
+  osd(min ? `Таймер сна: остановлю через ${min} мин` : episode ? 'Остановлю после этой серии' : 'Таймер сна выключен');
+}
+$('sleep').onclick = e => {
+  e.stopPropagation();
+  const m = $('menu');
+  if (m.style.display === 'block') { m.style.display = 'none'; return; }
+  const left = sleep.until > Date.now() ? ` · осталось ${Math.ceil((sleep.until - Date.now()) / 60000)} мин` : '';
+  const items = [['Выключен', 0, false, !sleepOn()], ['После этой серии', 0, true, sleep.episode],
+    ...[15, 30, 45, 60, 90].map(x => [`Через ${x} минут`, x, false, sleep.until > Date.now() && sleep.min === x])];
+  m.innerHTML = `<div class="t">Таймер сна${left}</div>` + items.map(([t, mi, ep, on], i) => `<div data-i="${i}" class="${on ? 'on' : ''}">${t}</div>`).join('');
+  m.onclick = ev => { const d = ev.target.closest('[data-i]'); if (!d) return; const [, mi, ep] = items[+d.dataset.i]; setSleep(mi, ep); m.style.display = 'none'; };
+  m.style.display = 'block';
+};
+document.addEventListener('click', () => $('menu').style.display = 'none');
+setInterval(() => {
+  $('sleep').classList.toggle('on', sleepOn());
+  if (sleep.until && Date.now() >= sleep.until) {
+    sleep = {until: 0, min: 0, episode: false}; api().sleep(0, 0, false);
+    if (playing) { cmd({method: 'pause'}); playing = false; render(); }
+    osd('Таймер сна — видео остановлено. Спокойной ночи!');
+  }
+}, 1000);
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT') return;
   const k = e.key.toLowerCase();
@@ -193,7 +283,8 @@ document.addEventListener('keydown', e => {
   else if (k === 'arrowright') { seek(pos + (e.shiftKey ? 30 : 10)); osd(e.shiftKey ? '+30 с' : '+10 с'); }
   else if (k === 'n') load(idx + 1, null);
   else if (k === 'p' && idx > 0) load(idx - 1, null);
-  else if (k === 's') { seek(pos + 85); osd('Заставка пропущена'); }
+  else if (k === 's') skipOpening();
+  else if (k === 'z') toggleZoom();
 });
 // --- восстановление после обрыва сети (смена Wi-Fi/VPN): если видео должно идти, а время не обновляется — перезагружаем с того же места
 let lastTick = Date.now(), userPaused = false, started = false;
@@ -206,6 +297,8 @@ window.addEventListener('beforeunload', () => save(true));
 window.addEventListener('pywebviewready', async () => {
   job = await api().job_data();
   document.title = job.title;
+  fill = !!job.zoom_fill; applyZoom();
+  if (job.sleep) sleep = job.sleep;
   job.episodes.forEach((ep, i) => { const o = document.createElement('option'); o.value = i;
     o.textContent = ep.key + ' серия' + (ep.name ? ' — ' + ep.name : ''); $('eps').appendChild(o); });
   load(job.index, job.position / 1000);

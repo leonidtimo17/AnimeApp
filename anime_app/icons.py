@@ -19,7 +19,7 @@ GLYPHS = {
     "trash-can": 0xF2ED, "xmark": 0xF00D, "microphone": 0xF130,
     "layer-group": 0xF5FD, "film": 0xF008, "filter": 0xF0B0, "robot": 0xF544,
     "wand-magic-sparkles": 0xE2CA, "chart-simple": 0xE473, "table-cells-large": 0xF009,
-    "thumbs-up": 0xF164, "sliders": 0xF1DE, "fire": 0xF06D,
+    "thumbs-up": 0xF164, "sliders": 0xF1DE, "fire": 0xF06D, "moon": 0xF186,
 }
 
 _families = {}

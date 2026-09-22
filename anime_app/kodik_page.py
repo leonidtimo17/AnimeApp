@@ -6,6 +6,7 @@
 import json
 import os
 import sys
+import time
 
 from PySide6.QtCore import QProcess, QSize, Qt, Signal
 from PySide6.QtGui import QWindow
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QVBoxLayo
 
 from .api import release_title
 from .icons import icon
-from .player import fill_dub_menu, fill_season_menu
+from .player import SLEEP, fill_dub_menu, fill_season_menu
 from .sources import resume_target
 from .theme import TEXT
 
@@ -114,8 +115,14 @@ class KodikPage(QWidget):
             json.dump({
                 "title": release_title(release), "dub": dub["name"], "team_id": dub["id"].split(":", 1)[1],
                 "episodes": [{"key": e["key"], "ordinal": e["ordinal"], "name": e.get("name"),
-                              "animelib_id": e["animelib_id"]} for e in eps],
+                              "animelib_id": e.get("animelib_id"), "kodik": e.get("kodik"),
+                              "opening": e.get("opening"), "ending": e.get("ending")} for e in eps],
                 "index": idx, "position": pos,
+                "sid": (release.get("shikimori") or {}).get("id"),
+                "autoskip": self.ctx.db.setting("autoskip_opening", False),
+                "zoom_fill": self.ctx.db.setting("zoom_fill", False),
+                "sleep": {"until": SLEEP["until"] * 1000 if SLEEP["until"] > time.time() else 0,
+                          "min": SLEEP["min"], "episode": SLEEP["episode"]},
             }, f, ensure_ascii=False)
 
         proc = QProcess(self)
@@ -144,6 +151,12 @@ class KodikPage(QWidget):
                 self.ctx.db.save_progress(self.release["id"], msg["key"], msg["ordinal"], msg["pos"], msg["dur"])
             elif kind == "error":
                 self.status.setText(msg.get("message", "Ошибка плеера"))
+            elif kind == "setting" and msg.get("key") in ("zoom_fill",):
+                self.ctx.db.set_setting(msg["key"], msg.get("value"))
+            elif kind == "sleep":
+                # Таймер сна, заведённый в плеере Kodik, действует и во встроенном плеере
+                SLEEP.update(until=(msg.get("until") or 0) / 1000, min=msg.get("min") or 0,
+                             episode=bool(msg.get("episode")))
 
     def _embed(self, hwnd):
         win = QWindow.fromWinId(hwnd)
