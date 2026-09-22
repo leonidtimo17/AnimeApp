@@ -1,2 +1,2 @@
 APP_NAME = "AnimeApp"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"

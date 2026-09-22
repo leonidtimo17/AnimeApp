@@ -12,6 +12,14 @@ export const I = {
 };
 export const fa = (k, cls = "fa") => `<i class="${cls}">${I[k]}</i>`;
 
+/**
+ * Картинка, которая грузится, только когда попадает на экран (или вот-вот попадёт).
+ * Раньше постеры и кадры были фоном блоков и качались все сразу — и невидимые тоже, мешая видимым.
+ */
+export const lazyImg = (url, eager = false) => (url
+  ? `<img class="lz" src="${esc(url)}" alt="" decoding="async" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} onload="this.classList.add('ok')" onerror="this.remove()">`
+  : "");
+
 let toastTimer;
 export function toast(text, ms = 2600) {
   const el = document.getElementById("toast");
@@ -53,7 +61,7 @@ export function card(item, { onOpen }) {
   if (e.status) badges.push(`<span class="badge green">${esc(store.STATUSES[e.status])}</span>`);
   if (e.favorite) badges.push(`<span class="badge red">${fa("heart")}</span>`);
   div.innerHTML = `
-    <div class="poster" style="${item.poster ? `background-image:url('${esc(item.poster)}')` : ""}">
+    <div class="poster">${lazyImg(item.poster)}
       <div class="badges">${badges.join("")}</div>
       <div class="quick">
         <button data-q="fav" aria-label="В избранное">${e.favorite ? `<i class="fa" style="color:#ff4d6d">${I.heart}</i>` : fa("heart", "far")}</button>
@@ -89,7 +97,7 @@ export function fillCards(container, items, onOpen, empty = "") {
 export function episodeTile(o) {
   const img = o.preview || o.poster;
   return `<div class="ep${o.missing ? " missing" : ""}${o.current ? " cur" : ""}" data-k="${esc(o.key)}">
-    <div class="thumb${o.preview ? "" : " fallback"}" style="${img ? `background-image:url('${esc(img)}')` : ""}">
+    <div class="thumb${o.preview ? "" : " fallback"}">${lazyImg(img)}
       ${o.preview ? `<span class="num">${esc(o.key)}</span>` : `<span class="big">${esc(o.key)}</span>`}
       ${o.watched ? `<span class="ok">${fa("circleCheck")}</span>` : ""}
       ${o.current && !o.watched ? `<span class="now">${fa("play")}</span>` : ""}
@@ -104,7 +112,7 @@ export function episodeTile(o) {
 export function episodeRow(o, i) {
   const img = o.preview || o.poster;
   return `<div class="it${o.current ? " on" : ""}" data-i="${i}">
-    <div class="thumb${o.preview ? "" : " fallback"}" style="${img ? `background-image:url('${esc(img)}')` : ""}">
+    <div class="thumb${o.preview ? "" : " fallback"}">${lazyImg(img)}
       ${o.preview ? "" : `<span class="big">${esc(o.key)}</span>`}
       <div class="tbar"><i style="width:${Math.round((o.watched ? 1 : o.progress || 0) * 100)}%"></i></div>
     </div>

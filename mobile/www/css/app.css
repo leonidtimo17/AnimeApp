@@ -227,3 +227,11 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
 #tabs button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; box-sizing: border-box; }
 #tabs .tab-av { width: 21px; height: 21px; border-radius: 50%; object-fit: cover; display: block; margin: 0 auto 1px; }
 #tabs button { min-width: 0; }
+
+/* Ленивые картинки: постеры и кадры серий появляются плавно, когда загрузятся */
+.poster, .thumb { position: relative; overflow: hidden; }
+.lz { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; z-index: 0; }
+.lz.ok { opacity: 1; }
+.poster > .badges, .poster > .quick { z-index: 2; }
+.thumb.fallback::before { z-index: 1; }
+.thumb > span, .thumb > .tbar { z-index: 2; }

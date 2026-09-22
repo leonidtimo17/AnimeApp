@@ -6,7 +6,7 @@ import * as shiki from "./shiki.js";
 import * as src from "./sources.js";
 import * as store from "./store.js";
 import * as taste from "./taste.js";
-import { I, card, closeSheet, episodeTile, esc, fa, fillCards, fmtDate, sheet, toast } from "./ui.js";
+import { I, card, closeSheet, episodeTile, esc, fa, fillCards, fmtDate, lazyImg, sheet, toast } from "./ui.js";
 
 const view = document.getElementById("view");
 const tabs = document.getElementById("tabs");
@@ -284,7 +284,7 @@ const VIEWS = {
       for (const r of rows) {
         const d = document.createElement("div");
         d.className = "hist";
-        d.innerHTML = `<div class="poster" style="background-image:url('${esc(r.anime.poster || "")}')"></div>
+        d.innerHTML = `<div class="poster">${lazyImg(r.anime.poster)}</div>
           <div style="flex:1;min-width:0"><b>${esc(r.anime.title)}</b><div class="muted">${r.key} серия · ${r.watched ? "просмотрено" : `${Math.floor(r.pos / 60)} из ${Math.floor(r.dur / 60)} мин`}</div>
           <div class="bar"><i style="width:${r.watched ? 100 : Math.round((r.pos / (r.dur || 1)) * 100)}%"></i></div></div>`;
         d.onclick = () => play(r.anime.id, r.key);
@@ -365,7 +365,7 @@ const VIEWS = {
     const meta = [["Тип", rel.type?.description], ["Год", rel.year], ["Эпизоды", rel.episodes_total], ["Возраст", rel.age_rating?.label],
       ["Статус", rel.is_ongoing ? "Выходит" : "Завершён"]].filter(([, v]) => v);
     view.querySelector("#dt").innerHTML = `
-      <div class="hero"><div class="poster" style="background-image:url('${esc(poster || "")}')"></div>
+      <div class="hero"><div class="poster">${lazyImg(poster, true)}</div>
         <div class="info"><h1>${esc(src.title(rel))}</h1><div class="muted">${esc([rel.name?.english, rel.name?.alternative].filter(Boolean).join(" / "))}</div>
           <div style="margin-top:8px">${rating}</div>
           <div class="meta">${meta.map(([k, v]) => `<span class="muted">${k}</span><span>${esc(v)}</span>`).join("")}</div>
@@ -390,7 +390,7 @@ const VIEWS = {
     src.franchise(rel).then((entries) => {
       if (!entries.length || current?.arg !== id) return;
       $("#seasons").innerHTML = `<h2>Сезоны и фильмы</h2><div class="strip">${entries.map((x, i) => `<div class="season${x.current ? " cur" : ""}" data-i="${i}">
-        <div class="poster" style="${x.poster ? `background-image:url('${esc(x.poster)}')` : ""}"></div>
+        <div class="poster">${lazyImg(x.poster)}</div>
         <div class="l">${esc(x.label)} · ${x.year || "анонс"}</div><div class="nm">${esc(x.name)}</div></div>`).join("")}</div>`;
       $("#seasons .strip").onclick = (ev) => { const s = ev.target.closest("[data-i]"); const x = s && entries[+s.dataset.i]; if (x && !x.current) show("details", x.releaseId); };
       // Прокручиваем только ленту (scrollIntoView дёргал бы и всю страницу)

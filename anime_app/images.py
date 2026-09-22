@@ -8,7 +8,9 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkDiskCache, QNetwork
 
 
 # Не больше N одновременных запросов к одному серверу (у Shikimori лимит ~5 запросов/с).
-MAX_PER_HOST = 3
+MAX_PER_HOST = 6
+HOST_LIMITS = {"shikimori.io": 4}
+MAX_SIDE = 420   # крупнее постеры нигде не показываются — в памяти держим уменьшенную копию
 
 
 class ImageLoader(QObject):
@@ -32,11 +34,35 @@ class ImageLoader(QObject):
             self._memory.move_to_end(url)
             callback(self._memory[url])
             return
+        # Уже скачано раньше — берём с диска сразу, без очереди к серверу
+        pix = self._from_disk(url)
+        if pix is not None:
+            self._remember(url, pix)
+            QTimer.singleShot(0, lambda: (receiver is None or shiboken6.isValid(receiver)) and callback(pix))
+            return
         waiters = self._pending.setdefault(url, [])
         waiters.append((receiver, callback))
         if len(waiters) > 1:
             return
         self._enqueue(url, 0)
+
+    def _from_disk(self, url):
+        cache = self.nam.cache()
+        dev = cache.data(QUrl(url)) if cache else None
+        if dev is None:
+            return None
+        pix = QPixmap()
+        pix.loadFromData(bytes(dev.readAll()))
+        dev.close()
+        return None if pix.isNull() else pix
+
+    def _remember(self, url, pix):
+        if pix.height() > MAX_SIDE:
+            pix = pix.scaledToHeight(MAX_SIDE, Qt.TransformationMode.SmoothTransformation)
+        self._memory[url] = pix
+        while len(self._memory) > 250:
+            self._memory.popitem(last=False)
+        return pix
 
     def _enqueue(self, url, attempt):
         host = QUrl(url).host()
@@ -44,9 +70,17 @@ class ImageLoader(QObject):
         self._pump(host)
 
     def _pump(self, host):
+        """Сначала — самые свежие запросы: это картинки экрана, который сейчас открыт.
+        Картинки закрытых экранов (их виджетов уже нет) не качаем вовсе."""
         queue = self._queues.get(host)
-        while queue and self._active.get(host, 0) < MAX_PER_HOST:
-            url, attempt = queue.popleft()
+        limit = HOST_LIMITS.get(host, MAX_PER_HOST)
+        while queue and self._active.get(host, 0) < limit:
+            url, attempt = queue.pop()
+            alive = [(r, cb) for r, cb in self._pending.get(url, []) if r is None or shiboken6.isValid(r)]
+            if not alive:
+                self._pending.pop(url, None)
+                continue
+            self._pending[url] = alive
             self._active[host] = self._active.get(host, 0) + 1
             self._fetch(host, url, attempt)
 
@@ -73,12 +107,7 @@ class ImageLoader(QObject):
             self._pump(host)
             if pix.isNull():
                 return
-            # В памяти держим уменьшенную копию: крупнее 420 px постеры нигде не показываются.
-            if pix.height() > 420:
-                pix = pix.scaledToHeight(420, Qt.TransformationMode.SmoothTransformation)
-            self._memory[url] = pix
-            while len(self._memory) > 250:
-                self._memory.popitem(last=False)
+            pix = self._remember(url, pix)
             for recv, cb in callbacks:
                 if recv is None or shiboken6.isValid(recv):
                     cb(pix)
