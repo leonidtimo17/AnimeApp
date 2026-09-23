@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from .api import episode_label, fmt_ordinal, release_title
 from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
 from .comments_panel import CommentsPanel
-from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
+from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo, enter_fullscreen, exit_fullscreen
 from .sources import resume_target
 from .icons import icon as fa_icon
 from .images import episode_thumb
@@ -1363,9 +1363,9 @@ class PlayerWindow(QWidget):
         self.fs = not self.fs
         win = self.window()
         if self.fs:
-            win.showFullScreen()
+            enter_fullscreen(win)
         else:
-            win.showNormal()
+            exit_fullscreen(win)
         self._apply_mode()
         self.setFocus()
         self.poke()
@@ -1373,7 +1373,7 @@ class PlayerWindow(QWidget):
     def toggle_pip(self):
         if not self.pip:
             if self.window().isFullScreen():
-                self.window().showNormal()
+                exit_fullscreen(self.window())
             screen = QGuiApplication.screenAt(self.window().geometry().center()) or QGuiApplication.primaryScreen()
             self.pip = True
             self.pip_toggled.emit(True)     # главное окно убирает плеер из своих экранов
@@ -1395,7 +1395,7 @@ class PlayerWindow(QWidget):
     def close_player(self):
         """Закрыть плеер и вернуться туда, откуда пришли."""
         if self.fs and not self.pip:
-            self.window().showNormal()
+            exit_fullscreen(self.window())
         self.fs = False
         self._apply_mode()
         self.stop()

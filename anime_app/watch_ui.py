@@ -34,6 +34,19 @@ QListWidget#WList::item:selected {{ background: rgba(255,106,26,0.25); color: wh
 """
 
 
+def enter_fullscreen(win):
+    """Запоминаем, было ли окно развёрнутым: иначе после выхода из полного экрана оно уменьшалось."""
+    win.setProperty("wasMaximized", win.isMaximized())
+    win.showFullScreen()
+
+
+def exit_fullscreen(win):
+    if win.property("wasMaximized"):
+        win.showMaximized()
+    else:
+        win.showNormal()
+
+
 def chip(text, glyph=None, checkable=False):
     b = QPushButton(("  " if glyph else "") + text)
     b.setObjectName("WChip")

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QSizePoli
 
 from .api import release_title
 from .comments_panel import CommentsPanel
-from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
+from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo, enter_fullscreen, exit_fullscreen
 from .icons import icon
 from .player import SLEEP, fill_dub_menu, fill_season_menu
 from .sources import resume_target
@@ -329,9 +329,9 @@ class KodikPage(QWidget):
     def toggle_fullscreen(self):
         win = self.window()
         if win.isFullScreen():
-            win.showNormal()
+            exit_fullscreen(win)
         else:
-            win.showFullScreen()   # на весь экран — только видео и его панель (Esc/F — выйти)
+            enter_fullscreen(win)   # на весь экран — только видео и его панель (Esc/F — выйти)
         self._apply_mode()
         self.fs_btn.setIcon(icon("compress" if win.isFullScreen() else "expand", TEXT, 16))
         if self.container:
