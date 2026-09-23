@@ -74,7 +74,8 @@ export function commentsPanel(root, o) {
       for (const c of items) {
         list.insertAdjacentHTML("beforeend", `<div class="cm">
           <img src="${esc(c.user?.avatar || "")}" alt="" loading="lazy">
-          <div><div class="cmh"><b>${esc(c.user?.nickname || "")}</b><span class="muted">${esc(AGO(c.created_at))}</span></div>
+          <div><div class="cmh"><b>${esc(c.user?.nickname || "")}</b><span class="muted">${esc(AGO(c.created_at))}</span>
+            <button class="creply" data-cr="${c.id}" data-cn="${esc(c.user?.nickname || "")}">Ответить</button></div>
           <div class="cmb">${shiki.renderBody(c.body, esc)}</div></div></div>`);
       }
       if (got.length > 30) list.insertAdjacentHTML("beforeend", `<button class="btn small cmore">Показать ещё</button>`);
@@ -115,6 +116,15 @@ export function commentsPanel(root, o) {
     const sp = t.closest(".spoiler");
     if (sp) { sp.classList.toggle("open"); return; }
     if (t.closest(".cmore")) { page++; load(true); return; }
+    const re = t.closest("[data-cr]");
+    if (re) {   // цитата-ответ, как на Shikimori
+      const ta = box.querySelector("textarea");
+      if (!ta) { toast("Чтобы отвечать, войдите через Shikimori"); return; }
+      ta.value = `[comment=${re.dataset.cr}]${re.dataset.cn}[/comment], ${ta.value}`;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      return;
+    }
     if (t.closest(".csend")) send();
   });
   // Касания внутри панели не должны закрывать плеер свайпом и перематывать видео

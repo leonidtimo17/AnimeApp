@@ -200,6 +200,16 @@ class Database:
         rows = self.conn.execute("SELECT anime_id FROM library UNION SELECT DISTINCT anime_id FROM progress")
         return [r[0] for r in rows]
 
+    def set_watched_quiet(self, anime_id, episode_id, ordinal, watched: bool):
+        """Как set_watched, но без отправки на Shikimori — это её же данные."""
+        self.conn.execute(
+            """INSERT INTO progress (anime_id, episode_id, ordinal, position, duration, watched, updated_at)
+               VALUES (?,?,?,0,0,?,?)
+               ON CONFLICT(anime_id, episode_id) DO UPDATE SET watched=excluded.watched""",
+            (anime_id, episode_id, ordinal, int(watched), time.time()),
+        )
+        self.conn.commit()
+
     def progress_for(self, anime_id):
         rows = self.conn.execute("SELECT * FROM progress WHERE anime_id=?", (anime_id,))
         return {r["episode_id"]: dict(r) for r in rows}

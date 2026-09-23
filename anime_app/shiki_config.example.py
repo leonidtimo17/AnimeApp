@@ -4,3 +4,4 @@
 CLIENT_ID = ""
 CLIENT_SECRET = ""
 APP_NAME = "AnimeApp"   # название приложения на Shikimori — отправляется в User-Agent
+REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"   # в точности как в настройках приложения на Shikimori

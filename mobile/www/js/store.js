@@ -82,6 +82,13 @@ export function saveProgress(id, key, ordinal, pos, dur, endingStart) {
   return !!watched && !prev.watched;
 }
 
+/** Как setWatched, но без отправки на Shikimori — это её же данные. */
+export function setWatchedQuiet(id, key, ordinal, watched) {
+  const p = (state.progress[id] ||= {});
+  p[key] = { ...(p[key] || { pos: 0, dur: 0 }), ordinal, watched, pos: 0, t: Date.now() };
+  save();
+}
+
 export function setWatched(id, key, ordinal, watched) {
   const p = (state.progress[id] ||= {});
   p[key] = { ...(p[key] || { pos: 0, dur: 0 }), ordinal, watched, pos: watched ? (p[key]?.pos || 0) : 0, t: Date.now() };

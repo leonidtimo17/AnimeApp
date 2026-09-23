@@ -10,6 +10,8 @@ pushd "%~dp0"
   --exclude-module PySide6.QtQuick3D --exclude-module PySide6.QtCharts ^
   --exclude-module PySide6.QtDataVisualization --exclude-module PySide6.QtPdf --exclude-module PIL ^
   --add-data "anime_app\assets;anime_app\assets" ^
+  --add-data "TERMS.md;." --add-data "PRIVACY.md;." ^
+  --add-data "LICENSE;." --add-data "THIRD_PARTY_NOTICES.md;." ^
   main.py
 echo.
 echo Готово: dist\AnimeApp\AnimeApp.exe

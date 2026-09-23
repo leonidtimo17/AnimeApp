@@ -4,5 +4,6 @@
 export default {
   clientId: "",
   clientSecret: "",
-  appName: "AnimeApp",  // название приложения на Shikimori — отправляется в User-Agent
+  appName: "AnimeApp",
+  redirect: "urn:ietf:wg:oauth:2.0:oob",  // в точности как в настройках приложения на Shikimori  // название приложения на Shikimori — отправляется в User-Agent
 };

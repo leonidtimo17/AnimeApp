@@ -68,6 +68,8 @@ class ShikimoriButton(QPushButton):
                       "В плеере можно обсуждать серии (клавиша C)."):
                 m.addAction(t).setEnabled(False)
             return
+        m.addSection(self._stats_text())
+        self.ctx.shiki.stats(self._got_stats)
         sync = m.addAction("Отправлять прогресс на Shikimori")
         sync.setCheckable(True)
         sync.setChecked(sh.sync_on())
@@ -76,6 +78,23 @@ class ShikimoriButton(QPushButton):
         m.addAction("Загрузить мой список с Shikimori", self._shiki_import)
         m.addSeparator()
         m.addAction("Выйти из Shikimori", sh.logout)
+
+    _STATUS_NAMES = {"watching": "смотрю", "completed": "просмотрено", "planned": "запланировано",
+                     "on_hold": "отложено", "dropped": "брошено", "rewatching": "пересматриваю"}
+
+    def _stats_text(self):
+        st = getattr(self, "_stats", None)
+        if not st:
+            return "Мой список на Shikimori"
+        parts = [f"{v} {self._STATUS_NAMES.get(k, k)}" for k, v in st.items() if v]
+        return "На Shikimori: " + ", ".join(parts) if parts else "На Shikimori пока пусто"
+
+    def _got_stats(self, st):
+        self._stats = st or {}
+        for act in self.shiki_menu.actions():   # меню уже открыто — обновляем строку на месте
+            if act.isSeparator() or not act.text().startswith(("Мой список", "На Shikimori")):
+                continue
+            act.setText(self._stats_text())
 
     def _shiki_login(self):
         from PySide6.QtCore import QUrl

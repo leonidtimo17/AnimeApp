@@ -1,12 +1,15 @@
 """Страница просмотра как на YouTube: блок под видео (название, серия, кнопки, описание)
 и список серий справа (вкладки «Все серии / Непросмотренные», строки с кадрами)."""
-from PySide6.QtCore import QSize, Qt, Signal
+import sys
+
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton, QVBoxLayout, QWidget,
 )
 
 from .api import fmt_ordinal, release_title
+from .db import STATUSES
 from .icons import icon
 from .images import episode_thumb
 from .theme import ACCENT, BORDER, MUTED, SURFACE, SURFACE_2, TEXT
@@ -34,17 +37,55 @@ QListWidget#WList::item:selected {{ background: rgba(255,106,26,0.25); color: wh
 """
 
 
+def _placement(win):
+    """Win32-положение окна: нужен «обычный» размер, в который Windows возвращает окно из полного экрана."""
+    import ctypes
+    import ctypes.wintypes as wt
+
+    class PL(ctypes.Structure):
+        _fields_ = [("length", wt.UINT), ("flags", wt.UINT), ("showCmd", wt.UINT),
+                    ("ptMin", wt.POINT), ("ptMax", wt.POINT), ("rcNormal", wt.RECT)]
+    pl = PL()
+    pl.length = ctypes.sizeof(pl)
+    hwnd = int(win.winId())
+    if not ctypes.windll.user32.GetWindowPlacement(hwnd, ctypes.byref(pl)):
+        return None, None, None
+    return ctypes.windll.user32, hwnd, pl
+
+
 def enter_fullscreen(win):
-    """Запоминаем, было ли окно развёрнутым: иначе после выхода из полного экрана оно уменьшалось."""
-    win.setProperty("wasMaximized", win.isMaximized())
-    win.showFullScreen()
+    """Полный экран без мигания: пока мы в нём, «обычный» размер окна = размеру развёрнутого.
+    Иначе Windows при выходе сначала возвращает маленькое окно и только потом разворачивает его."""
+    if sys.platform == "win32" and win.isMaximized():
+        user32, hwnd, pl = _placement(win)
+        if pl is not None:
+            import ctypes
+            import ctypes.wintypes as wt
+            win.setProperty("normalRect", (pl.rcNormal.left, pl.rcNormal.top, pl.rcNormal.right, pl.rcNormal.bottom))
+            rect = wt.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))   # рамка развёрнутого окна
+            pl.rcNormal = rect
+            user32.SetWindowPlacement(hwnd, ctypes.byref(pl))
+    win.setWindowState(win.windowState() | Qt.WindowState.WindowFullScreen)
 
 
 def exit_fullscreen(win):
-    if win.property("wasMaximized"):
-        win.showMaximized()
-    else:
-        win.showNormal()
+    """Снимаем только признак «полный экран», не трогая «развёрнуто», и возвращаем прежний обычный размер."""
+    win.setWindowState(win.windowState() & ~Qt.WindowState.WindowFullScreen)
+    saved = win.property("normalRect")
+    if not saved:
+        return
+    win.setProperty("normalRect", None)
+
+    def restore():
+        import ctypes
+        import ctypes.wintypes as wt
+        user32, hwnd, pl = _placement(win)
+        if pl is None:
+            return
+        pl.rcNormal = wt.RECT(*saved)
+        user32.SetWindowPlacement(hwnd, ctypes.byref(pl))
+    QTimer.singleShot(400, restore)   # окно уже развёрнуто — вернуть размер «в обычном состоянии» можно спокойно
 
 
 def chip(text, glyph=None, checkable=False):
@@ -85,6 +126,14 @@ class WatchInfo(QWidget):
         self.dub.setMenu(dub_menu)
         self.fav = chip("Избранное", "heart", checkable=True)
         self.plan = chip("Хочу посмотреть", "bookmark", checkable=True)
+        self.status = chip("Статус", "check")
+        self.status_menu = QMenu(self.status)
+        self.status_menu.aboutToShow.connect(self._fill_status_menu)
+        self.status.setMenu(self.status_menu)
+        self.score = chip("Оценить", "star")
+        self.score_menu = QMenu(self.score)
+        self.score_menu.aboutToShow.connect(self._fill_score_menu)
+        self.score.setMenu(self.score_menu)
         self.seasons = chip("Сезоны и фильмы", "layer-group")
         self.seasons.setMenu(season_menu)
         self.seasons.hide()
@@ -92,7 +141,7 @@ class WatchInfo(QWidget):
         self.cm = chip("Обсуждение", "comments", checkable=True)   # плеер Kodik: обсуждение справа вместо серий
         self.cm.hide()
         self.cm.clicked.connect(self.comments_clicked.emit)
-        for b in (self.dub, self.fav, self.plan, self.seasons, self.cm, self.fs):
+        for b in (self.dub, self.fav, self.plan, self.status, self.score, self.seasons, self.cm, self.fs):
             row.addWidget(b)
         row.addStretch(1)
         lay.addLayout(row)
@@ -121,10 +170,48 @@ class WatchInfo(QWidget):
         entry = self.ctx.db.library_entry(release["id"])
         self.fav.setChecked(bool(entry.get("favorite")))
         self.plan.setChecked(entry.get("status") == "planned")
+        self.status.setText("  " + (STATUSES.get(entry.get("status")) or "Статус"))
+        self.score.setText(f"  Оценка {entry['score']}" if entry.get("score") else "  Оценить")
+        self.score.setChecked(bool(entry.get("score")))
         full = (release.get("description") or "").strip()
         if full != self._full:
             self._full, self._open = full, False
             self._render_desc()
+
+    def _fill_status_menu(self):
+        self.status_menu.clear()
+        if not self.release:
+            return
+        cur = self.ctx.db.library_entry(self.release["id"]).get("status")
+        for key, name in STATUSES.items():
+            act = self.status_menu.addAction(name, lambda k=key: self._set_status(k))
+            act.setCheckable(True)
+            act.setChecked(cur == key)
+        self.status_menu.addSeparator()
+        self.status_menu.addAction("Убрать из списка", lambda: self._set_status(None))
+
+    def _set_status(self, key):
+        self.ctx.db.set_status(self.release["id"], key)
+        self.status.setText("  " + (STATUSES.get(key) or "Статус"))
+        self.ctx.library_changed.emit()
+
+    def _fill_score_menu(self):
+        self.score_menu.clear()
+        if not self.release:
+            return
+        cur = self.ctx.db.library_entry(self.release["id"]).get("score")
+        for v in range(10, 0, -1):
+            act = self.score_menu.addAction(f"{v}  " + "★" * round(v / 2), lambda v=v: self._set_score(v))
+            act.setCheckable(True)
+            act.setChecked(cur == v)
+        self.score_menu.addSeparator()
+        self.score_menu.addAction("Убрать оценку", lambda: self._set_score(None))
+
+    def _set_score(self, v):
+        self.ctx.db.set_score(self.release["id"], v)
+        self.score.setText(f"  Оценка {v}" if v else "  Оценить")
+        self.score.setChecked(bool(v))
+        self.ctx.library_changed.emit()
 
     def use_comments_button(self):
         """Обсуждение не под видео, а по кнопке (плеер Kodik — его окно нельзя прокручивать)."""

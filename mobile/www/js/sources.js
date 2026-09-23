@@ -371,6 +371,13 @@ function label(kind, n) {
   return kind;
 }
 
+/** Похожие тайтлы по версии Shikimori. */
+export async function similar(sid) {
+  if (!sid) return [];
+  const items = await api.request(`${SHIKI}/api/animes/${sid}/similar`, { ttl: 86400 }).catch(() => []);
+  return (items || []).filter((x) => !["music", "pv", "cm"].includes(x.kind)).map(shikiItem);
+}
+
 export async function franchise(rel) {
   if (franchiseCache[rel.id]) return franchiseCache[rel.id];
   const sid = rel.shikimori?.id;

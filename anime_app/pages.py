@@ -15,6 +15,7 @@ from .sources import is_external_id, norm, resume_target
 from .icons import icon, toggle_icon
 from .theme import ACCENT, MUTED, TEXT
 from .images import cover, episode_thumb, rounded
+from .legal import show_doc
 from .widgets import (
     CardGrid, CardRow, ExpandingLabel, FlowLayout, clear_layout, icon_label, label,
 )
@@ -374,6 +375,9 @@ class LibraryPage(Page):
         menu.addAction("Импорт из файла…", self._import)
         menu.addSeparator()
         menu.addAction("Очистить кэш", self._clear_cache)
+        menu.addSeparator()
+        menu.addAction("Пользовательское соглашение", lambda: show_doc(self, "terms"))
+        menu.addAction("Политика конфиденциальности", lambda: show_doc(self, "privacy"))
         backup.setMenu(menu)
         head.addWidget(backup)
         lay.addLayout(head)
@@ -779,6 +783,9 @@ class DetailsPage(Page):
         ub.addWidget(up_host)
         lay.addWidget(self.upcoming_box)
         self.upcoming_box.hide()
+        self.similar_row = CardRow(ctx, "Похожее")   # подборка Shikimori
+        self.similar_row.hide()
+        lay.addWidget(self.similar_row)
         lay.addSpacing(8)
         lay.addWidget(self.seasons_box)
         lay.addStretch(1)
@@ -818,6 +825,22 @@ class DetailsPage(Page):
                 self.description.setText(msg)
 
         self.ctx.load_release(release_id, ok, fail)
+
+    def _load_similar(self, rel):
+        sid = (rel.get("shikimori") or {}).get("id")
+        self.similar_row.hide()
+        if not sid:
+            return
+
+        def ok(items):
+            if self.release is not rel:
+                return
+            cards = [self.ctx.sources.shiki_item(x) for x in items or []
+                     if x.get("kind") not in ("music", "pv", "cm")][:20]
+            self.similar_row.set_items(cards)
+            self.similar_row.setVisible(bool(cards))
+        self.ctx.api.fetch(f"https://shikimori.io/api/animes/{sid}/similar", None, ok, lambda _e: None,
+                           cache_ttl=86400)
 
     def _load_franchise(self, rel):
         def ok(entries):
@@ -909,6 +932,7 @@ class DetailsPage(Page):
             self.upcoming_box.hide()
             self._render_episodes()
             self._load_franchise(rel)
+            self._load_similar(rel)
         self._load_dubs()
 
     def _render_library(self):

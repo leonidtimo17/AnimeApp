@@ -191,9 +191,12 @@ class CommentsPanel(QFrame):
             # Shikimori отдаёт на один комментарий больше, если есть следующая страница
             for c in (items or [])[:30]:
                 u = c.get("user") or {}
+                nick = html.escape(u.get("nickname") or "")
                 self.items_html.append(
-                    f'<p style="margin:10px 0 2px"><b>{html.escape(u.get("nickname") or "")}</b>'
-                    f'&nbsp;&nbsp;<span style="color:#9a9aa6;font-size:12px">{_ago(c.get("created_at"))}</span></p>'
+                    f'<p style="margin:10px 0 2px"><b>{nick}</b>'
+                    f'&nbsp;&nbsp;<span style="color:#9a9aa6;font-size:12px">{_ago(c.get("created_at"))}</span>'
+                    f'&nbsp;&nbsp;<a href="r:{c.get("id")};{nick}" style="color:#9a9aa6;font-size:12px;'
+                    f'text-decoration:none">Ответить</a></p>'
                     f'<div style="margin-bottom:8px">{render_body(c.get("body"))}</div>'
                     '<hr style="border:none;background:#2a2a33;height:1px">')
             if not items and self.page == 1:
@@ -215,6 +218,13 @@ class CommentsPanel(QFrame):
         s = url.toString()
         if s.startswith("t:"):
             self.seek_requested.emit(int(s[2:]))
+        elif s.startswith("r:"):   # ответ цитатой, как на Shikimori
+            cid, _, nick = s[2:].partition(";")
+            self.edit.setPlainText(f"[comment={cid}]{nick}[/comment], " + self.edit.toPlainText())
+            self.edit.setFocus()
+            cursor = self.edit.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.edit.setTextCursor(cursor)
 
     # ------------------------------------------------------------ отправка
     def send(self):

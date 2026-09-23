@@ -18,13 +18,14 @@ from .sources import SHIKI, SHIKI_OFFSET, Sources
 
 try:
     from . import shiki_config as _cfg
-    CONFIG = {"id": _cfg.CLIENT_ID, "secret": _cfg.CLIENT_SECRET, "app": getattr(_cfg, "APP_NAME", "AnimeApp")}
+    CONFIG = {"id": _cfg.CLIENT_ID, "secret": _cfg.CLIENT_SECRET, "app": getattr(_cfg, "APP_NAME", "AnimeApp"),
+              # Должен в точности совпадать с Redirect URI приложения на Shikimori
+              "redirect": getattr(_cfg, "REDIRECT_URI", "urn:ietf:wg:oauth:2.0:oob")}
     if not CONFIG["id"]:
         CONFIG = None
 except ImportError:
     CONFIG = None
 
-REDIRECT = "urn:ietf:wg:oauth:2.0:oob"
 SCOPE = "user_rates comments"
 TO_SHIKI = {"planned": "planned", "watching": "watching", "completed": "completed",
             "postponed": "on_hold", "dropped": "dropped"}
@@ -66,7 +67,8 @@ class Shikimori(QObject):
 
     def authorize_url(self):
         return (f"{SHIKI}/oauth/authorize?client_id={urllib.parse.quote(CONFIG['id'])}"
-                f"&redirect_uri={urllib.parse.quote(REDIRECT)}&response_type=code&scope={urllib.parse.quote(SCOPE)}")
+                f"&redirect_uri={urllib.parse.quote(CONFIG['redirect'])}&response_type=code"
+                f"&scope={urllib.parse.quote(SCOPE)}")
 
     def _token(self, form, on_ok, on_err):
         def ok(d):
@@ -76,8 +78,8 @@ class Shikimori(QObject):
             on_ok({"access": d["access_token"], "refresh": d.get("refresh_token"),
                    "expires": time.time() + (d.get("expires_in") or 86400)})
         self.api.fetch(f"{SHIKI}/oauth/token", None, ok, on_err, headers={"User-Agent": CONFIG["app"]},
-                       form={"client_id": CONFIG["id"], "client_secret": CONFIG["secret"], "redirect_uri": REDIRECT,
-                             **form})
+                       form={"client_id": CONFIG["id"], "client_secret": CONFIG["secret"],
+                             "redirect_uri": CONFIG["redirect"], **form})
 
     def login(self, code, on_ok, on_err):
         def got(tok):
@@ -176,6 +178,49 @@ class Shikimori(QObject):
                           json_body={"user_rate": body})
         self.call("/api/v2/user_rates", got, lambda _e: done(False),
                   params={"user_id": me["id"], "target_id": sid, "target_type": "Anime"})
+
+    def rate(self, sid, cb):
+        """Моя запись об этом тайтле на Shikimori: cb({episodes, status, score}) или cb(None)."""
+        me = self.user()
+        if not sid or not me:
+            cb(None)
+            return
+        self.call("/api/v2/user_rates", lambda rates: cb((rates or [None])[0]), lambda _e: cb(None),
+                  params={"user_id": me["id"], "target_id": sid, "target_type": "Anime"})
+
+    def stats(self, cb):
+        """Статистика профиля: {статус: сколько тайтлов}."""
+        me = self.user()
+        if not me:
+            cb(None)
+            return
+        self.api.fetch(f"{SHIKI}/api/users/{me['id']}", None,
+                       lambda u: cb({s["name"]: s["size"] for s in ((u.get("stats") or {}).get("statuses") or {}).get("anime") or []}),
+                       lambda _e: cb(None), cache_ttl=300)
+
+    def pull_progress(self, anime_id, episodes, cb=None):
+        """Серии, отмеченные на Shikimori, отмечаем и здесь — чтобы продолжить с нужной."""
+        cb = cb or (lambda _n: None)
+        if not self.sync_on():
+            cb(0)
+            return
+
+        def got(rate):
+            seen = (rate or {}).get("episodes") or 0
+            if not seen:
+                cb(0)
+                return
+            progress = self.db.progress_for(anime_id)
+            n = 0
+            for e in episodes:
+                o = e.get("ordinal")
+                if o is None or float(o) != int(float(o)) or float(o) > seen:
+                    continue
+                if not (progress.get(e["key"]) or {}).get("watched"):
+                    self.db.set_watched_quiet(anime_id, e["key"], o, True)
+                    n += 1
+            cb(n)
+        self.rate(self.sid_of(anime_id), got)
 
     def push_all(self, on_step, on_done):
         ids = [i for i in self.db.tracked_ids() if self.sid_of(i)]

@@ -13,6 +13,10 @@ New-Item -ItemType Directory -Force "$work\mobile" | Out-Null
 if (-not (Test-Path $sdkLink)) { cmd /c mklink /J "$sdkLink" "$sdk" | Out-Null }
 $env:ANDROID_HOME = $sdkLink
 
+# Правовые документы кладём в www, чтобы они попали в APK
+New-Item -ItemType Directory -Force "$src\www\legal" | Out-Null
+Copy-Item "$src\..\TERMS.md", "$src\..\PRIVACY.md" "$src\www\legal" -Force
+
 Push-Location $src
 npx cap sync android
 Pop-Location

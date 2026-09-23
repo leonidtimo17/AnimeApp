@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.player.progress_saved.connect(self.refresh_current)
         self.player.closed.connect(self._player_closed)
         self.player.pip_toggled.connect(self._pip_toggled)
+        self.player.fs_toggled.connect(self._fs_toggled)
         self.player.dub_selected.connect(self._switch_dub)
         self.player.season_selected.connect(self._open_season)
         self.stack.addWidget(self.player)
@@ -201,6 +202,13 @@ class MainWindow(QMainWindow):
                     return
 
                 def eps_ok(eps):
+                    def with_progress(_n):
+                        # Серии, отмеченные на Shikimori, отмечаем и здесь — продолжим с нужной
+                        if dub["native"]:
+                            self.ctx.sources.previews(release, dubs, launch)
+                        else:
+                            launch({})
+
                     def launch(previews):
                         stop()
                         if self._play_token is not token:
@@ -210,10 +218,7 @@ class MainWindow(QMainWindow):
                             if not e.get("preview") and previews.get(e["key"]):
                                 e["preview"] = previews[e["key"]]
                         self._launch(release, dub, eps, episode_key or None)
-                    if dub["native"]:
-                        self.ctx.sources.previews(release, dubs, launch)
-                    else:
-                        launch({})
+                    self.ctx.shiki.pull_progress(release["id"], eps, with_progress)
 
                 self.ctx.sources.episodes(release, dub, eps_ok,
                                           lambda msg: stop(f"Не удалось загрузить серии: {msg}"))
@@ -302,6 +307,20 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(self.player)
         if self._in_player():
             self.go_back()
+
+    def _fs_toggled(self, on):
+        """Плеер уходит в отдельное окно на весь экран и возвращается обратно."""
+        if on:
+            self.stack.removeWidget(self.player)
+        else:
+            self.player.hide()
+            self.player.setWindowFlags(Qt.WindowType.Widget)
+            if self.stack.indexOf(self.player) < 0:
+                self.stack.addWidget(self.player)
+            self._set_current(self.player)
+            self.player.show()
+            self.activateWindow()
+            self.player.setFocus()
 
     def _pip_toggled(self, on):
         if on:

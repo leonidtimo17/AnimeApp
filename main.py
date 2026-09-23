@@ -46,6 +46,11 @@ def main():
 
     window = MainWindow(ctx)
     window.show()
+
+    # Первый запуск: пользовательское соглашение и политика конфиденциальности
+    from anime_app.legal import ensure_accepted
+    if not ensure_accepted(window, db):
+        sys.exit(0)
     sys.exit(app.exec())
 
 

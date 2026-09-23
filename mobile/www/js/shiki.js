@@ -8,7 +8,6 @@ import * as store from "./store.js";
 import { SHIKI_OFFSET } from "./sources.js";
 
 const SHIKI = "https://shikimori.io";
-const REDIRECT = "urn:ietf:wg:oauth:2.0:oob";
 const SCOPE = "user_rates comments";
 // Наши статусы → статусы Shikimori и обратно
 const TO_SHIKI = { planned: "planned", watching: "watching", completed: "completed", postponed: "on_hold", dropped: "dropped" };
@@ -17,7 +16,10 @@ const FROM_SHIKI = { planned: "planned", watching: "watching", rewatching: "watc
 let cfgPromise = null;
 /** {clientId, clientSecret, appName} или null, если приложение не зарегистрировано на Shikimori. */
 export function config() {
-  cfgPromise ||= import("./shiki_config.js").then((m) => (m.default?.clientId ? m.default : null)).catch(() => null);
+  cfgPromise ||= import("./shiki_config.js")
+    // redirect должен в точности совпадать с Redirect URI приложения на Shikimori
+    .then((m) => (m.default?.clientId ? { redirect: "urn:ietf:wg:oauth:2.0:oob", ...m.default } : null))
+    .catch(() => null);
   return cfgPromise;
 }
 
@@ -29,14 +31,14 @@ export const syncOn = () => loggedIn() && store.setting("shikiSync", true);
 export async function authorizeUrl() {
   const c = await config();
   if (!c) return null;
-  return `${SHIKI}/oauth/authorize?client_id=${encodeURIComponent(c.clientId)}&redirect_uri=${encodeURIComponent(REDIRECT)}`
+  return `${SHIKI}/oauth/authorize?client_id=${encodeURIComponent(c.clientId)}&redirect_uri=${encodeURIComponent(c.redirect)}`
     + `&response_type=code&scope=${encodeURIComponent(SCOPE)}`;
 }
 
 async function tokenRequest(form) {
   const c = await config();
   const d = await api.request(`${SHIKI}/oauth/token`, {
-    form: { client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: REDIRECT, ...form },
+    form: { client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: c.redirect, ...form },
     headers: { "User-Agent": c.appName || "AnimeApp" },
   });
   if (!d?.access_token) throw new Error("Shikimori не выдал доступ");
@@ -110,6 +112,41 @@ async function pushNow(id) {
   if (rate) await call(`/api/v2/user_rates/${rate.id}`, { method: "PATCH", json: { user_rate: body } });
   else await call("/api/v2/user_rates", { json: { user_rate: { ...body, user_id: me.id, target_id: sid, target_type: "Anime" } } });
   return true;
+}
+
+/** Моя запись об этом тайтле на Shikimori: {episodes, status, score} или null. */
+export async function rate(sid) {
+  const me = user();
+  if (!sid || !me) return null;
+  const [r] = await call("/api/v2/user_rates", { params: { user_id: me.id, target_id: sid, target_type: "Anime" } });
+  return r || null;
+}
+
+/** Статистика профиля: сколько тайтлов в каждом статусе. */
+export async function stats() {
+  const me = user();
+  if (!me) return null;
+  const u = await api.request(`${SHIKI}/api/users/${me.id}`, { ttl: 300 });
+  const list = u?.stats?.statuses?.anime || [];
+  return Object.fromEntries(list.map((s) => [s.name, s.size]));
+}
+
+/** Серии, отмеченные на Shikimori, но не отмеченные здесь: докатываем прогресс. onMark(key, ordinal). */
+export async function pullProgress(id, eps) {
+  if (!syncOn()) return 0;
+  const sid = sidOf(id);
+  const r = await rate(sid).catch(() => null);
+  const seen = r?.episodes || 0;
+  if (!seen) return 0;
+  const prog = store.progress(id);
+  let n = 0;
+  for (const e of eps) {
+    if (Number.isInteger(+e.ordinal) && +e.ordinal <= seen && !prog[e.key]?.watched) {
+      store.setWatchedQuiet(id, e.key, e.ordinal, true);
+      n++;
+    }
+  }
+  return n;
 }
 
 /** Отправить весь список сразу. onStep(done, total). */

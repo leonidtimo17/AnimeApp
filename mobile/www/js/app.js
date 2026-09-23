@@ -7,6 +7,7 @@ import * as src from "./sources.js";
 import * as store from "./store.js";
 import * as taste from "./taste.js";
 import { I, card, closeSheet, episodeTile, esc, fa, fillCards, fmtDate, lazyImg, sheet, toast } from "./ui.js";
+import { ensureAccepted, showDoc } from "./legal.js";
 
 const view = document.getElementById("view");
 const tabs = document.getElementById("tabs");
@@ -101,12 +102,24 @@ async function shikiBox(el, refresh) {
     return;
   }
   const on = store.setting("shikiSync", true);
+  const s = store.stats();
   el.innerHTML = `<div class="shk-row"><img class="shk-av" src="${esc(u.avatar || "")}" alt="">
       <div style="flex:1;min-width:0"><b>${esc(u.nickname)}</b><div class="muted">Shikimori подключён</div></div>
       <button class="chip${on ? " on" : ""}" id="shSync">${on ? fa("check") + " " : ""}Отправлять прогресс</button></div>
+    <div class="shk-stats" id="shStats"><span class="muted">Статистика профиля…</span></div>
+    <p class="muted">Здесь просмотрено серий: ${s.episodes} · ${s.hours.toFixed(1)} ч</p>
     <div class="shk-row"><button class="btn small" id="shPush">Отправить весь список</button>
       <button class="btn small" id="shPull">Загрузить список с Shikimori</button>
       <button class="btn small" id="shOut">Выйти</button></div>`;
+  shiki.stats().then((st) => {
+    const box = el.querySelector("#shStats");
+    if (!box) return;
+    const names = { watching: "Смотрю", completed: "Просмотрено", planned: "Запланировано",
+      on_hold: "Отложено", dropped: "Брошено", rewatching: "Пересматриваю" };
+    const items = Object.entries(st || {}).filter(([, v]) => v).map(([k, v]) =>
+      `<span class="shk-stat"><b>${v}</b> ${esc(names[k] || k)}</span>`).join("");
+    box.innerHTML = items || `<span class="muted">В списке на Shikimori пока пусто</span>`;
+  }).catch(() => {});
   el.querySelector("#shSync").onclick = () => { store.setSetting("shikiSync", !on); refresh(); };
   el.querySelector("#shOut").onclick = () => { shiki.logout(); toast("Вы вышли из Shikimori"); refresh(); };
   el.querySelector("#shPush").onclick = async (ev) => {
@@ -299,8 +312,12 @@ const VIEWS = {
     fillCards(grid, store.library(tab).map((a) => itemFromStored(a)), openAnime, "Пока пусто. Добавляйте аниме кнопками на карточках.");
     const tools = document.createElement("div");
     tools.style.margin = "24px 0";
-    tools.innerHTML = `<button class="btn small" id="cc">${fa("trash")} Очистить кэш</button>`;
+    tools.innerHTML = `<button class="btn small" id="cc">${fa("trash")} Очистить кэш</button>
+      <button class="btn small" id="lt">Пользовательское соглашение</button>
+      <button class="btn small" id="lp">Политика конфиденциальности</button>`;
     tools.querySelector("#cc").onclick = () => { api.clearCache(); toast("Кэш очищен. Списки и история сохранены."); };
+    tools.querySelector("#lt").onclick = () => showDoc("terms");
+    tools.querySelector("#lp").onclick = () => showDoc("privacy");
     lb.appendChild(tools);
   },
 
@@ -380,8 +397,18 @@ const VIEWS = {
         <button class="btn small" id="dub">${fa("mic")} Озвучка: ищем…</button></div>
       <div class="ranges" id="ranges"></div><div class="eps" id="eps"><p class="muted">Ищем серии во всех источниках…</p></div>
       <div id="soon"></div>
-      <div id="seasons"></div>`;
+      <div id="seasons"></div>
+      <div id="similar"></div>`;
     const $ = (s) => view.querySelector(s);
+    // Похожие тайтлы по версии Shikimori
+    if (rel.shikimori?.id) {
+      src.similar(rel.shikimori.id).then((items) => {
+        const box = $("#similar");
+        if (!box || !items.length) return;
+        box.innerHTML = `<h2>Похожее</h2><div class="grid"></div>`;
+        fillCards(box.querySelector(".grid"), items.slice(0, 18), openAnime);
+      }).catch(() => {});
+    }
     $("#status").onclick = () => sheet([{ title: "Список", items: [...Object.entries(store.STATUSES).map(([k, n]) => ({ label: n, on: e.status === k,
       action: () => { store.setStatus(id, k); VIEWS.details(id); } })), ...(e.status ? [{ label: "Убрать из списков", action: () => { store.setStatus(id, null); VIEWS.details(id); } }] : [])] }]);
     $("#fav").onclick = () => { store.setFavorite(id, !e.favorite); VIEWS.details(id); };
@@ -481,6 +508,9 @@ async function play(id, key = "", rel = null, dub = null, position = null) {
     store.setSetting(`dub:${id}`, dub.id);
     let eps = await src.episodes(rel, dub);
     if (!eps.length) return toast("В этой озвучке пока нет серий");
+    // Серии, отмеченные на Shikimori, отмечаем и здесь — чтобы продолжить с нужной
+    const pulled = await shiki.pullProgress(id, eps).catch(() => 0);
+    if (pulled) toast(`С Shikimori: отмечено просмотренных серий — ${pulled}`);
     const pv = await src.previews(rel, dubs).catch(() => ({}));
     eps = eps.map((e) => ({ ...e, preview: e.preview || pv[e.key] || null }));
     const seasons = await src.franchise(rel).catch(() => []);
@@ -496,3 +526,4 @@ async function play(id, key = "", rel = null, dub = null, position = null) {
 }
 
 show("home");
+ensureAccepted();   // при первом запуске — соглашение

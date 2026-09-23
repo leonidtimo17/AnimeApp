@@ -249,6 +249,8 @@ export function open(opts) {
         <button class="chip" data-p="dub">${fa("mic")} ${esc(opts.dub.name)}</button>
         <button class="chip${en.favorite ? " on" : ""}" data-p="fav">${fa("heart")} Избранное</button>
         <button class="chip${en.status === "planned" ? " on" : ""}" data-p="plan">${fa("bookmark")} Хочу посмотреть</button>
+        <button class="chip" data-p="status">${fa("check")} ${esc(store.STATUSES[en.status] || "Статус")}</button>
+        <button class="chip${en.score ? " on" : ""}" data-p="score">${fa("star")} ${en.score ? `Оценка ${en.score}` : "Оценить"}</button>
         ${opts.seasons?.length ? `<button class="chip" data-p="seasons">${fa("layers")} Сезоны и фильмы</button>` : ""}
         <button class="chip" data-p="fs">${fa("expand")} На весь экран</button>
       </div>
@@ -278,6 +280,16 @@ export function open(opts) {
     else if (a === "fs") setFs(true);
     else if (a === "desc") b.classList.toggle("open");
     else if (a === "fav") { store.setFavorite(id, !en.favorite); toast(en.favorite ? "Убрано из избранного" : "Добавлено в избранное"); renderInfo(); }
+    else if (a === "status") {
+      sheet([{ title: "Статус", items: [...Object.entries(store.STATUSES).map(([k, n]) => ({ label: n, on: en.status === k,
+        action: () => { store.setStatus(id, k); toast(`Статус: ${n}`); renderInfo(); } })),
+        { label: "Убрать из списка", action: () => { store.setStatus(id, null); renderInfo(); } }] }]);
+    } else if (a === "score") {
+      sheet([{ title: "Моя оценка", items: [...Array.from({ length: 10 }, (_x, i) => 10 - i).map((v) => ({
+        label: `${v} ${"★".repeat(Math.round(v / 2))}`, on: en.score === v,
+        action: () => { store.setScore(id, v); toast(`Оценка ${v} — уйдёт на Shikimori`); renderInfo(); } })),
+        { label: "Убрать оценку", action: () => { store.setScore(id, null); renderInfo(); } }] }]);
+    }
     else if (a === "plan") {
       store.setStatus(id, en.status === "planned" ? "watching" : "planned");
       toast(en.status === "planned" ? "Убрано из «Хочу посмотреть»" : "Добавлено в «Хочу посмотреть»");

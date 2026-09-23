@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from .api import episode_label, fmt_ordinal, release_title
 from .bandwidth import BandwidthProbe, quality_name, recommend, required_mbps
 from .comments_panel import CommentsPanel
-from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo, enter_fullscreen, exit_fullscreen
+from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
 from .sources import resume_target
 from .icons import icon as fa_icon
 from .images import episode_thumb
@@ -272,6 +272,7 @@ class PlayerWindow(QWidget):
     progress_saved = Signal()
     closed = Signal()             # пользователь закрыл плеер
     pip_toggled = Signal(bool)    # главное окно забирает/возвращает виджет
+    fs_toggled = Signal(bool)     # то же для полного экрана
     dub_selected = Signal(dict)   # сменить озвучку (с той же серии и места)
     season_selected = Signal(dict)  # открыть другой сезон/фильм
 
@@ -1358,22 +1359,32 @@ class PlayerWindow(QWidget):
 
     # ============================================================ window modes
     def toggle_fullscreen(self):
+        """Полный экран — отдельное окно поверх всех. Само окно приложения не меняем:
+        Windows разворачивает его в два шага, и этот промежуточный кадр видно как мигание."""
         if self.pip:
             self.toggle_pip()
         self.fs = not self.fs
-        win = self.window()
         if self.fs:
-            enter_fullscreen(win)
+            screen = QGuiApplication.screenAt(self.window().geometry().center()) or QGuiApplication.primaryScreen()
+            self.fs_toggled.emit(True)      # главное окно отдаёт виджет плеера
+            self.setParent(None)
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                                | Qt.WindowType.WindowStaysOnTopHint)
+            self.setGeometry(screen.geometry())
+            self._apply_mode()
+            self.show()
+            self.raise_()
+            self.activateWindow()
         else:
-            exit_fullscreen(win)
-        self._apply_mode()
+            self.fs_toggled.emit(False)     # виджет возвращается в окно приложения
+            self._apply_mode()
         self.setFocus()
         self.poke()
 
     def toggle_pip(self):
         if not self.pip:
-            if self.window().isFullScreen():
-                exit_fullscreen(self.window())
+            if self.fs:
+                self.toggle_fullscreen()
             screen = QGuiApplication.screenAt(self.window().geometry().center()) or QGuiApplication.primaryScreen()
             self.pip = True
             self.pip_toggled.emit(True)     # главное окно убирает плеер из своих экранов
@@ -1395,7 +1406,8 @@ class PlayerWindow(QWidget):
     def close_player(self):
         """Закрыть плеер и вернуться туда, откуда пришли."""
         if self.fs and not self.pip:
-            exit_fullscreen(self.window())
+            self.fs = False
+            self.fs_toggled.emit(False)
         self.fs = False
         self._apply_mode()
         self.stop()

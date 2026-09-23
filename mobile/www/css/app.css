@@ -292,3 +292,22 @@ h2 { font-size: 19px; font-weight: 700; margin: 22px 0 10px; display: flex; alig
   #player:not(.fs) .pl-comments { order: 5; padding: 0 16px calc(24px + var(--safe-bottom)); }
   #player:not(.fs) .pv-list { overflow: visible; flex: none; }
 }
+
+/* Статистика профиля Shikimori */
+.shk-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.shk-stat { background: var(--surface-2); border-radius: 10px; padding: 6px 12px; font-size: 13px; }
+.shk-stat b { color: var(--accent); margin-right: 4px; }
+
+.creply { background: none; border: 0; color: var(--muted); font-size: 12px; padding: 0 4px; }
+.creply:active { color: var(--accent); }
+
+/* Правовые документы */
+.legal { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column;
+  padding: calc(12px + var(--safe-top)) 18px calc(12px + var(--safe-bottom)); }
+.legal-head { display: flex; align-items: center; gap: 12px; }
+.legal-head h1 { font-size: 20px; flex: 1; }
+.legal-body { flex: 1; overflow-y: auto; margin: 10px 0; font-size: 14px; line-height: 1.55; color: #d8d8e0; }
+.legal-body h1 { font-size: 19px; margin: 14px 0 6px; color: var(--text); }
+.legal-body h2 { font-size: 16px; margin: 14px 0 4px; color: var(--text); }
+.legal-body code { background: var(--surface-2); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
+.legal-foot { display: flex; align-items: center; gap: 12px; }
