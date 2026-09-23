@@ -87,15 +87,19 @@ export function shikiItem(x) {
 }
 
 const KIND_RANK = { tv: 0, movie: 1, ona: 2, ova: 3, tv_special: 4, special: 5 };
-export async function shikiSearch(q) {
-  const items = await api.request(`${SHIKI}/api/animes`, { params: { search: q, limit: 50 }, ttl: 3600 });
+const SHIKI_SEARCH_LIMIT = 50;
+/** Возвращает массив найденного; в свойстве hasMore — есть ли следующая страница. */
+export async function shikiSearch(q, page = 1) {
+  const items = await api.request(`${SHIKI}/api/animes`, { params: { search: q, limit: SHIKI_SEARCH_LIMIT, page }, ttl: 3600 });
   const key = titleKey(q);
   const exact = (x) => ([x.russian, x.name].some((n) => titleKey(n) === key) ? 0 : 1);
-  return (items || []).filter((x) => !["music", "pv", "cm"].includes(x.kind))
+  const out = (items || []).filter((x) => !["music", "pv", "cm"].includes(x.kind))
     .map((x, i) => ({ x, i }))
     .sort((a, b) => exact(a.x) - exact(b.x) || (KIND_RANK[a.x.kind] ?? 6) - (KIND_RANK[b.x.kind] ?? 6)
       || (a.x.aired_on || "9999").localeCompare(b.x.aired_on || "9999") || a.i - b.i)
     .map(({ x }) => x);
+  out.hasMore = (items || []).length >= SHIKI_SEARCH_LIMIT;
+  return out;
 }
 
 export async function shikiRelease(id) {

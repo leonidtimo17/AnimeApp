@@ -296,8 +296,18 @@ class CardGrid(QScrollArea):
         outer.addWidget(self.flow_host)
         self.status = label("", "Muted")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setMinimumHeight(60)
+        self.status.setMinimumHeight(40)
         outer.addWidget(self.status)
+        # Кнопка на случай, если прокруткой пользоваться неудобно
+        self.more_btn = QPushButton("Показать ещё")
+        self.more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_btn.clicked.connect(self.need_more.emit)
+        self.more_btn.hide()
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self.more_btn)
+        row.addStretch(1)
+        outer.addLayout(row)
         outer.addStretch(1)
         self.setWidget(inner)
         self.verticalScrollBar().valueChanged.connect(self._check_scroll)
@@ -307,8 +317,15 @@ class CardGrid(QScrollArea):
         if bar.maximum() > 0 and value >= bar.maximum() - 400:
             self.need_more.emit()
 
+    def set_more(self, has_more):
+        """Показать/скрыть кнопку «Показать ещё» под сеткой."""
+        self.more_btn.setVisible(bool(has_more))
+        self.more_btn.setEnabled(True)
+        self.more_btn.setText("Показать ещё")
+
     def clear(self):
         clear_layout(self.flow)
+        self.more_btn.hide()
         self.verticalScrollBar().setValue(0)
 
     def add_items(self, items):

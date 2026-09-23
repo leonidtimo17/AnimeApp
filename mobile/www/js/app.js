@@ -199,24 +199,65 @@ const VIEWS = {
 
   search() {
     view.innerHTML = `<h1>Поиск</h1><input class="input" id="q" placeholder="Название на русском, английском или японском…" autocomplete="off">
-      <p class="muted" id="cnt"></p><div class="grid" id="res"></div>`;
+      <p class="muted" id="cnt"></p><div class="grid" id="res"></div>
+      <div style="text-align:center;margin:18px"><button class="btn" id="more" hidden>Показать ещё</button></div>`;
     const q = view.querySelector("#q"), res = view.querySelector("#res"), cnt = view.querySelector("#cnt");
+    const more = view.querySelector("#more");
     q.value = store.setting("lastSearch", "");
-    let timer, token = 0;
-    const run = async () => {
-      const text = q.value.trim();
+    // Ищем сразу в двух каталогах и листаем оба: сначала страницы AniLibria, потом — полный каталог Shikimori
+    let timer, token = 0, text = "", alPage = 0, alTotal = 1, shPage = 0, shDone = false, found = 0, extras = 0;
+    const seenSid = new Set(), seenNames = new Set();
+
+    async function loadMore() {
+      const my = token;
+      more.disabled = true;
+      more.textContent = "Загружаем…";
+      let items = [];
+      if (alPage < alTotal) {
+        const d = await api.catalog({ search: text, page: alPage + 1, limit: 30 }).catch(() => null);
+        if (my !== token) return;
+        alPage = d?.meta?.pagination?.current_page || alPage + 1;
+        alTotal = d?.meta?.pagination?.total_pages || alPage;
+        found = d?.meta?.pagination?.total ?? found;
+        for (const r of d?.data || []) {
+          if (r.shikimori?.id) seenSid.add(r.shikimori.id);
+          seenNames.add(src.norm(r.name?.main)); seenNames.add(src.norm(r.name?.english));
+          items.push(itemFromRelease(r));
+        }
+      } else if (!shDone) {
+        const list = await src.shikiSearch(text, shPage + 1).catch(() => []);
+        if (my !== token) return;
+        shPage++;
+        shDone = !list.hasMore;
+        const fresh = list.filter((x) => !seenSid.has(x.id) && !seenNames.has(src.norm(x.russian)) && !seenNames.has(src.norm(x.name)));
+        fresh.forEach((x) => seenSid.add(x.id));
+        extras += fresh.length;
+        items = fresh.map(src.shikiItem);
+      }
+      for (const it of items) res.appendChild(card(it, { onOpen: openAnime }));
+      cnt.textContent = res.children.length
+        ? `Найдено: ${found}${extras ? ` + ${extras} из полного каталога` : ""} · показано ${res.children.length}`
+        : "Ничего не найдено";
+      more.disabled = false;
+      more.textContent = "Показать ещё";
+      more.hidden = alPage >= alTotal && shDone;
+      // В первой порции мало найденного — сразу добираем из полного каталога, без лишнего нажатия
+      if (!more.hidden && res.children.length < 20) loadMore();
+    }
+
+    const run = () => {
+      text = q.value.trim();
       store.setSetting("lastSearch", text);
-      if (!text) { res.innerHTML = ""; cnt.textContent = ""; return; }
-      const my = ++token;
+      token++;
+      res.innerHTML = "";
+      seenSid.clear(); seenNames.clear();
+      alPage = 0; alTotal = 1; shPage = 0; shDone = false; found = 0; extras = 0;
+      more.hidden = true;
+      if (!text) { cnt.textContent = ""; return; }
       cnt.textContent = "Ищем…";
-      const [alR, shR] = await Promise.all([api.searchAL(text).catch(() => []), src.shikiSearch(text).catch(() => [])]);
-      if (my !== token) return;
-      const seenSid = new Set(alR.map((r) => r.shikimori?.id).filter(Boolean));
-      const seenNames = new Set(alR.flatMap((r) => [src.norm(r.name?.main), src.norm(r.name?.english)]));
-      const extra = shR.filter((x) => !seenSid.has(x.id) && !seenNames.has(src.norm(x.russian)) && !seenNames.has(src.norm(x.name))).map(src.shikiItem);
-      cnt.textContent = `Найдено: ${alR.length}${extra.length ? ` + ${extra.length} из полного каталога` : ""}`;
-      fillCards(res, [...alR.map(itemFromRelease), ...extra], openAnime, "Ничего не найдено");
+      loadMore();
     };
+    more.onclick = loadMore;
     q.oninput = () => { clearTimeout(timer); timer = setTimeout(run, 450); };
     run();
   },

@@ -250,6 +250,7 @@ class CatalogPage(QWidget):
             self.count.setText(f"Найдено: {pag.get('total', 0)}")
             items = [self.ctx.item_from_release(r) for r in data.get("data", [])]
             self.grid.add_items(items)
+            self.grid.set_more(self.page < self.total_pages)
             if self.page == 1 and not items:
                 self.grid.set_status("Под такие фильтры ничего не нашлось. Попробуйте убрать один из жанров.")
             else:

@@ -231,17 +231,22 @@ class Sources(QObject):
         self._al(f"/anime/{slug}", ok, on_err, {"fields": ["summary", "genres"]})
 
     # ================================================================ Shikimori (полный каталог)
-    def shiki_search(self, query, on_ok, on_err=None):
+    SHIKI_SEARCH_LIMIT = 50
+
+    def shiki_search(self, query, on_ok, on_err=None, page=1):
         """Порядок: точное совпадение названия → сериалы, фильмы, потом спешлы → по дате выхода.
-        (Сам Shikimori при поиске ставит первыми короткие спешлы, например у «Re:Zero».)"""
+        (Сам Shikimori при поиске ставит первыми короткие спешлы, например у «Re:Zero».)
+        on_ok(items, has_more) — has_more говорит, есть ли следующая страница."""
         key = title_key(query)
 
         def ok(items):
+            has_more = len(items or []) >= self.SHIKI_SEARCH_LIMIT
             items = [x for x in items or [] if x.get("kind") not in ("music", "pv", "cm")]
             items.sort(key=lambda x: (key not in (title_key(x.get("russian")), title_key(x.get("name"))),
                                       SHIKI_KIND_RANK.get(x.get("kind"), 6), x.get("aired_on") or "9999"))
-            on_ok(items)
-        self.api.fetch(f"{SHIKI}/api/animes", {"search": query, "limit": 50}, ok, on_err, cache_ttl=3600)
+            on_ok(items, has_more)
+        self.api.fetch(f"{SHIKI}/api/animes", {"search": query, "limit": self.SHIKI_SEARCH_LIMIT, "page": page},
+                       ok, on_err, cache_ttl=3600)
 
     @staticmethod
     def shiki_item(x) -> dict:

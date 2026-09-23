@@ -196,6 +196,8 @@ class CatalogPage(Page):
         self.seen_names = set()
         self.al_total = 0
         self.other_total = 0
+        self.other_page = 0        # страницы полного каталога Shikimori
+        self.other_done = False
         self.refs_loaded = False
 
     def on_show(self):
@@ -224,10 +226,16 @@ class CatalogPage(Page):
         self.count.setText(f"Найдено: {self.al_total}{extra}")
 
     def _search_other(self, query, token):
-        """Тайтлы, которых нет на AniLibria, — из полного каталога Shikimori (серии ищутся в AnimeVost и AnimeLib)."""
-        def ok(results):
+        """Тайтлы, которых нет на AniLibria, — из полного каталога Shikimori (серии ищутся в AnimeVost и AnimeLib).
+        Листается постранично: как только страницы AniLibria кончились, дальше идут страницы Shikimori."""
+        self.other_page += 1
+        page = self.other_page
+
+        def ok(results, has_more):
             if token != self.token:
                 return
+            self.loading = False
+            self.other_done = not has_more
             items = []
             for x in results:
                 names = {norm(x.get("name")), norm(x.get("russian"))} - {""}
@@ -237,12 +245,24 @@ class CatalogPage(Page):
                 entry = self.ctx.db.library_entry(item["id"])
                 item["status"], item["favorite"] = entry.get("status"), entry.get("favorite")
                 items.append(item)
-            self.other_total = len(items)
+            for x in results or []:
+                self.seen_shiki.add(int(x["id"]))
+            self.other_total += len(items)
             self._update_count()
             self.grid.add_items(items)
-            if not items and self.al_total == 0:
+            self.grid.set_more(not self.other_done)
+            if not items and self.al_total == 0 and page == 1:
                 self.grid.set_status("Ничего не найдено. Попробуйте другое название.")
-        self.ctx.sources.shiki_search(query, ok)
+            elif self.other_done:
+                self.grid.set_status("Это всё, что нашлось")
+            else:
+                self.grid.set_status("")
+
+        def fail(_msg):
+            if token == self.token:
+                self.loading = False
+                self.other_done = True
+        self.ctx.sources.shiki_search(query, ok, fail, page=page)
 
     def reload(self):
         self.token += 1
@@ -250,6 +270,8 @@ class CatalogPage(Page):
         self.seen_shiki = set()
         self.al_total = 0
         self.other_total = 0
+        self.other_page = 0
+        self.other_done = False
         self.page = 0
         self.total_pages = 1
         self.loading = False
@@ -257,7 +279,15 @@ class CatalogPage(Page):
         self.load_more()
 
     def load_more(self):
-        if self.loading or self.page >= self.total_pages:
+        query = self.search.text().strip()
+        if self.loading:
+            return
+        if self.page >= self.total_pages:
+            # Страницы AniLibria кончились — листаем полный каталог Shikimori
+            if query and not self.other_done:
+                self.loading = True
+                self.grid.set_status("Загрузка…")
+                self._search_other(query, self.token)
             return
         self.loading = True
         token = self.token
@@ -281,8 +311,9 @@ class CatalogPage(Page):
                     self.seen_shiki.add(int(r["shikimori"]["id"]))
             items = [self.ctx.item_from_release(r) for r in releases]
             self.grid.add_items(items)
+            self.grid.set_more(self.page < self.total_pages or bool(self.search.text().strip()))
             query = self.search.text().strip()
-            if self.page == 1 and query:
+            if self.page >= self.total_pages and query:
                 self._search_other(query, token)
             if self.page == 1 and not items and not query:
                 self.grid.set_status("Ничего не найдено. Попробуйте другие фильтры.")
