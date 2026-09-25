@@ -10,10 +10,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayout
 
 from ..core.config import PROJECT_DIR
+from ..core.i18n import service as i18n, t
 
 TERMS_VERSION = "2026-09-23"   # меняется вместе с текстом соглашения
-DOCS = {"terms": ("TERMS.md", "Пользовательское соглашение"),
-        "privacy": ("PRIVACY.md", "Политика конфиденциальности")}
+DOCS = {"terms": ("TERMS.md", "legal.terms"), "privacy": ("PRIVACY.md", "legal.privacy")}   # файл, ключ заголовка
 
 
 def _base_dir():
@@ -29,8 +29,12 @@ def read_doc(key):
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 return f.read()
-    return (f"Файл {name} не найден рядом с программой.\n\n"
-            "Актуальные тексты — в репозитории проекта: https://github.com/leonidtimo17/AnimeApp")
+    return t("legal.missing_file", name=name) + "\n\nhttps://github.com/leonidtimo17/AnimeApp"
+
+
+def _with_note(text):
+    """Документы — юридические тексты на русском; на других языках — пометка сверху."""
+    return text if i18n().locale == "ru" else f"**{t('legal.russian_only')}**\n\n{text}"
 
 
 def _md_to_html(text):
@@ -61,12 +65,12 @@ def show_doc(parent, key):
     """Показать документ в отдельном окне."""
     _name, title = DOCS[key]
     dlg = QDialog(parent)
-    dlg.setWindowTitle(title)
+    dlg.setWindowTitle(t(title))
     dlg.resize(760, 620)
     lay = QVBoxLayout(dlg)
     view = QTextBrowser()
     view.setOpenExternalLinks(True)
-    view.setHtml(_md_to_html(read_doc(key)))
+    view.setHtml(_md_to_html(_with_note(read_doc(key))))
     lay.addWidget(view)
     box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     box.rejected.connect(dlg.reject)
@@ -80,18 +84,18 @@ def ensure_accepted(parent, prefs):
     if prefs.get("terms_accepted") == TERMS_VERSION:
         return True
     dlg = QDialog(parent)
-    dlg.setWindowTitle("Пользовательское соглашение")
+    dlg.setWindowTitle(t("legal.terms"))
     dlg.resize(760, 640)
     lay = QVBoxLayout(dlg)
     view = QTextBrowser()
     view.setOpenExternalLinks(True)
-    view.setHtml(_md_to_html(read_doc("terms") + "\n\n---\n\n" + read_doc("privacy")))
+    view.setHtml(_md_to_html(_with_note(read_doc("terms") + "\n\n---\n\n" + read_doc("privacy"))))
     lay.addWidget(view)
-    agree = QCheckBox("Я прочитал(а) и принимаю условия")
+    agree = QCheckBox(t("legal.agree"))
     lay.addWidget(agree)
     box = QDialogButtonBox()
-    ok = box.addButton("Продолжить", QDialogButtonBox.ButtonRole.AcceptRole)
-    box.addButton("Выйти", QDialogButtonBox.ButtonRole.RejectRole)
+    ok = box.addButton(t("common.continue"), QDialogButtonBox.ButtonRole.AcceptRole)
+    box.addButton(t("common.quit"), QDialogButtonBox.ButtonRole.RejectRole)
     ok.setEnabled(False)
     agree.toggled.connect(ok.setEnabled)
     box.accepted.connect(dlg.accept)

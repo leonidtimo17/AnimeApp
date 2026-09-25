@@ -4,10 +4,11 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLineEdit, QVBoxLayout
 
-from ...infrastructure.api.anilibria import SORTINGS, TYPES
+from ...infrastructure.api.anilibria import sortings, types
 from ..widgets.cards import CardGrid
 from ..widgets.layout import Page, label
-from ..widgets.states import LOADING
+from ..widgets.states import loading
+from ...core.i18n import t
 
 SEARCH_DEBOUNCE_MS = 450   # ищем, когда пользователь перестал печатать
 
@@ -19,28 +20,28 @@ class SearchPage(Page):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(32, 28, 32, 0)
         lay.setSpacing(14)
-        lay.addWidget(label("Поиск аниме", "H1"))
+        lay.addWidget(label(t("search.title"), "H1"))
 
         self.search = QLineEdit()
         self.search.setObjectName("Search")
-        self.search.setPlaceholderText("Название на русском, английском или японском…")
+        self.search.setPlaceholderText(t("search.placeholder"))
         self.search.setClearButtonEnabled(True)
         lay.addWidget(self.search)
 
         filters = QHBoxLayout()
         filters.setSpacing(10)
         self.genre = QComboBox()
-        self.genre.addItem("Все жанры", None)
+        self.genre.addItem(t("search.all_genres"), None)
         self.type = QComboBox()
-        self.type.addItem("Все типы", None)
-        for value, name in TYPES:
+        self.type.addItem(t("search.all_types"), None)
+        for value, name in types():
             self.type.addItem(name, value)
         self.year_from = QComboBox()
         self.year_to = QComboBox()
-        self.year_from.addItem("Год от", None)
-        self.year_to.addItem("Год до", None)
+        self.year_from.addItem(t("search.year_from"), None)
+        self.year_to.addItem(t("search.year_to"), None)
         self.sorting = QComboBox()
-        for value, name in SORTINGS:
+        for value, name in sortings():
             self.sorting.addItem(name, value)
         for w in (self.genre, self.type, self.year_from, self.year_to, self.sorting):
             w.setMinimumWidth(140)
@@ -85,9 +86,9 @@ class SearchPage(Page):
     def reload(self):
         if self.session:
             self.session.cancel()      # ответы прошлого поиска больше не нужны
-        t = self.type.currentData()
+        kind = self.type.currentData()
         self.session = self.ctx.search(self.search.text(), {
-            "genre": self.genre.currentData(), "types": [t] if t else None,
+            "genre": self.genre.currentData(), "types": [kind] if kind else None,
             "year_from": self.year_from.currentData(), "year_to": self.year_to.currentData(),
             "sorting": self.sorting.currentData()})
         self.grid.clear()
@@ -98,20 +99,19 @@ class SearchPage(Page):
         session = self.session
         if not session or session.loading or session.exhausted:
             return
-        self.grid.set_status(LOADING)
+        self.grid.set_status(loading())
 
         def on_page(page):
             if session is not self.session:
                 return
-            extra = f" + {page.extra} из полного каталога" if page.extra else ""
-            self.count.setText(f"Найдено: {page.total}{extra}")
+            self.count.setText(t("search.found_extra", n=page.total, extra=page.extra) if page.extra
+                               else t("search.found", n=page.total))
             self.grid.add_items(page.items)
             self.grid.set_more(page.has_more)
             if page.nothing_found and (page.source == "shikimori" or not session.query):
-                self.grid.set_status("Ничего не найдено. Попробуйте другое название." if session.query
-                                     else "Ничего не найдено. Попробуйте другие фильтры.")
+                self.grid.set_status(t("search.nothing_query") if session.query else t("search.nothing_filters"))
             elif page.finished and session.query:
-                self.grid.set_status("Это всё, что нашлось")
+                self.grid.set_status(t("search.all_shown"))
             else:
                 self.grid.set_status("")
 

@@ -3,9 +3,19 @@ from __future__ import annotations
 
 import datetime
 
-MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
-WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
-WEEKDAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+from .i18n import t
+
+
+def months() -> list[str]:
+    return t("dates.months_short").split("|")
+
+
+def weekdays_short() -> list[str]:
+    return t("dates.weekdays_short").split("|")
+
+
+def weekdays() -> list[str]:
+    return t("dates.weekdays").split("|")
 
 
 def fmt_ordinal(value) -> str:
@@ -32,16 +42,16 @@ def fmt_duration(sec) -> str:
     if not sec:
         return ""
     m = round(sec / 60)
-    return f"{m} мин" if m < 60 else f"{m // 60} ч {m % 60} мин"
+    return t("dates.duration_m", m=m) if m < 60 else t("dates.duration_hm", h=m // 60, m=m % 60)
 
 
 def fmt_when(ts, today: datetime.date | None = None) -> str:
     dt = datetime.datetime.fromtimestamp(ts)
     today = today or datetime.date.today()
     if dt.date() == today:
-        return f"сегодня в {dt:%H:%M}"
+        return t("dates.today_at", time=f"{dt:%H:%M}")
     if dt.date() == today - datetime.timedelta(days=1):
-        return f"вчера в {dt:%H:%M}"
+        return t("dates.yesterday_at", time=f"{dt:%H:%M}")
     return f"{dt:%d.%m.%Y %H:%M}"
 
 
@@ -52,13 +62,13 @@ def next_air_date(weekday: int, today: datetime.date | None = None) -> datetime.
 
 
 def short_date(d) -> str:
-    return f"{d.day} {MONTHS[d.month - 1]}"
+    return f"{d.day} {months()[d.month - 1]}"
 
 
 def fmt_air_date(d) -> str:
     if not d:
-        return "дата пока неизвестна"
-    text = f"{d.day} {MONTHS[d.month - 1]}, {WEEKDAYS_SHORT[d.weekday()]}"
+        return t("dates.unknown")
+    text = f"{d.day} {months()[d.month - 1]}, {weekdays_short()[d.weekday()]}"
     if getattr(d, "hour", 0) or getattr(d, "minute", 0):
         text += f" · {d:%H:%M}"
     return text
@@ -67,14 +77,14 @@ def fmt_air_date(d) -> str:
 def ago(iso: str | None, now: datetime.datetime | None = None) -> str:
     """«5 мин назад», «3 ч назад», «2 дн назад» или дата."""
     try:
-        t = datetime.datetime.fromisoformat(iso)
-        s = ((now or datetime.datetime.now(t.tzinfo)) - t).total_seconds()
+        when = datetime.datetime.fromisoformat(iso)
+        s = ((now or datetime.datetime.now(when.tzinfo)) - when).total_seconds()
     except (TypeError, ValueError):
         return ""
     if s < 3600:
-        return f"{max(1, round(s / 60))} мин назад"
+        return t("dates.minutes_ago", n=max(1, round(s / 60)))
     if s < 86400:
-        return f"{round(s / 3600)} ч назад"
+        return t("dates.hours_ago", n=round(s / 3600))
     if s < 86400 * 30:
-        return f"{round(s / 86400)} дн назад"
-    return t.strftime("%d.%m.%Y")
+        return t("dates.days_ago", n=round(s / 86400))
+    return when.strftime("%d.%m.%Y")

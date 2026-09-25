@@ -4,11 +4,12 @@ from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QHBoxLayout, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from ...infrastructure.api.anilibria import SEASONS, SORTINGS, TYPES
+from ...infrastructure.api.anilibria import seasons, sortings, types
 from ...infrastructure.http.client import RequestScope
 from ..widgets.cards import CardGrid
 from ..widgets.layout import FlowLayout, Page, clear_layout, label
-from ..widgets.states import LOADING, error_text
+from ..widgets.states import error_text, loading
+from ...core.i18n import t
 
 FILTER_DEBOUNCE_MS = 250   # несколько щелчков по фильтрам подряд — один запрос
 
@@ -45,26 +46,27 @@ class CatalogPage(Page):
         pl.setContentsMargins(22, 28, 18, 24)
         pl.setSpacing(10)
         head = QHBoxLayout()
-        head.addWidget(label("Фильтры", "H2"))
+        head.addWidget(label(t("catalog.filters"), "H2"))
         head.addStretch(1)
-        reset = QPushButton("Сбросить")
+        reset = QPushButton(t("catalog.reset"))
         reset.setObjectName("Flat")
         reset.clicked.connect(self.reset)
         head.addWidget(reset)
         pl.addLayout(head)
 
-        pl.addWidget(label("Сортировка", "FilterTitle"))
+        pl.addWidget(label(t("catalog.sort"), "FilterTitle"))
         self.sorting = QComboBox()
-        for value, name in SORTINGS:
+        for value, name in sortings():
             self.sorting.addItem(name, value)
         self.sorting.currentIndexChanged.connect(lambda: self._set("sorting", self.sorting.currentData()))
         pl.addWidget(self.sorting)
 
-        pl.addWidget(label("Статус", "FilterTitle"))
+        pl.addWidget(label(t("catalog.status"), "FilterTitle"))
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
         self.status_group = QButtonGroup(self)
-        for value, name in ((None, "Все"), (True, "Выходит"), (False, "Вышло")):
+        for value, name in ((None, t("catalog.statuses.all")), (True, t("catalog.statuses.ongoing")),
+                            (False, t("catalog.statuses.finished"))):
             b = self._chip(name)
             b.setProperty("value", value)
             self.status_group.addButton(b)
@@ -73,31 +75,31 @@ class CatalogPage(Page):
         status_row.addStretch(1)
         pl.addLayout(status_row)
 
-        pl.addWidget(label("Тип", "FilterTitle"))
+        pl.addWidget(label(t("catalog.type"), "FilterTitle"))
         types_host = QWidget()
         self.types_flow = FlowLayout(types_host, spacing=6)
         self.type_buttons = {}
-        for value, name in TYPES:
+        for value, name in types():
             b = self._chip(name)
             b.clicked.connect(lambda _=False, v=value: self._toggle("types", v))
             self.types_flow.addWidget(b)
             self.type_buttons[value] = b
         pl.addWidget(types_host)
 
-        pl.addWidget(label("Сезон", "FilterTitle"))
+        pl.addWidget(label(t("catalog.season"), "FilterTitle"))
         self.season = QComboBox()
-        self.season.addItem("Любой", None)
-        for value, name in SEASONS:
+        self.season.addItem(t("catalog.any"), None)
+        for value, name in seasons():
             self.season.addItem(name, value)
         self.season.currentIndexChanged.connect(lambda: self._set("season", self.season.currentData()))
         pl.addWidget(self.season)
 
-        pl.addWidget(label("Годы выхода", "FilterTitle"))
+        pl.addWidget(label(t("catalog.years"), "FilterTitle"))
         years = QHBoxLayout()
         self.year_from = QComboBox()
         self.year_to = QComboBox()
-        self.year_from.addItem("от", None)
-        self.year_to.addItem("до", None)
+        self.year_from.addItem(t("catalog.from"), None)
+        self.year_to.addItem(t("catalog.to"), None)
         self.year_from.currentIndexChanged.connect(lambda: self._set("year_from", self.year_from.currentData()))
         self.year_to.currentIndexChanged.connect(lambda: self._set("year_to", self.year_to.currentData()))
         years.addWidget(self.year_from)
@@ -105,7 +107,7 @@ class CatalogPage(Page):
         pl.addLayout(years)
 
         genre_head = QHBoxLayout()
-        genre_head.addWidget(label("Жанры", "FilterTitle"))
+        genre_head.addWidget(label(t("catalog.genres"), "FilterTitle"))
         genre_head.addStretch(1)
         self.genre_hint = label("", "Muted")
         genre_head.addWidget(self.genre_hint)
@@ -123,7 +125,7 @@ class CatalogPage(Page):
         right.setContentsMargins(28, 28, 28, 0)
         right.setSpacing(12)
         top = QHBoxLayout()
-        top.addWidget(label("Каталог", "H1"))
+        top.addWidget(label(t("navigation.catalog"), "H1"))
         top.addStretch(1)
         self.count = label("", "Muted")
         top.addWidget(self.count)
@@ -185,7 +187,7 @@ class CatalogPage(Page):
         for gid, b in self.genre_buttons.items():
             b.setChecked(gid in self.f["genres"])
         n = len(self.f["genres"])
-        self.genre_hint.setText(f"выбрано: {n} (все сразу)" if n > 1 else (f"выбрано: {n}" if n else ""))
+        self.genre_hint.setText(t("catalog.selected_all", n=n) if n > 1 else (t("catalog.selected", n=n) if n else ""))
         self._describe()
 
     def _describe(self):
@@ -194,14 +196,14 @@ class CatalogPage(Page):
         if self.f["genres"]:
             parts.append(" + ".join(names.get(g, str(g)) for g in self.f["genres"]))
         if self.f["types"]:
-            parts.append(", ".join(dict(TYPES).get(t, t) for t in self.f["types"]))
+            parts.append(", ".join(dict(types()).get(c, c) for c in self.f["types"]))
         if self.f["status"] is not None:
-            parts.append("выходит" if self.f["status"] else "вышло")
+            parts.append(t("catalog.statuses.ongoing" if self.f["status"] else "catalog.statuses.finished").lower())
         if self.f["season"]:
-            parts.append(dict(SEASONS)[self.f["season"]].lower())
+            parts.append(dict(seasons())[self.f["season"]].lower())
         if self.f["year_from"] or self.f["year_to"]:
             parts.append(f"{self.f['year_from'] or '…'}–{self.f['year_to'] or '…'}")
-        self.active.setText(("Фильтры: " + " · ".join(parts)) if parts else "Все аниме")
+        self.active.setText(t("catalog.active", filters=" · ".join(parts)) if parts else t("catalog.all_anime"))
 
     # ------------------------------------------------------------ data
     def on_show(self):
@@ -243,7 +245,7 @@ class CatalogPage(Page):
             return
         self.loading = True
         token = self.token
-        self.grid.set_status(LOADING)
+        self.grid.set_status(loading())
 
         def ok(data):
             if token != self.token:
@@ -252,12 +254,12 @@ class CatalogPage(Page):
             pag = data.get("meta", {}).get("pagination", {})
             self.total_pages = pag.get("total_pages", 1)
             self.page = pag.get("current_page", self.page + 1)
-            self.count.setText(f"Найдено: {pag.get('total', 0)}")
+            self.count.setText(t("search.found", n=pag.get("total", 0)))
             items = self.ctx.releases.items(data.get("data", []))
             self.grid.add_items(items)
             self.grid.set_more(self.page < self.total_pages)
             if self.page == 1 and not items:
-                self.grid.set_status("Под такие фильтры ничего не нашлось. Попробуйте убрать один из жанров.")
+                self.grid.set_status(t("catalog.nothing"))
             else:
                 self.grid.set_status("")
 

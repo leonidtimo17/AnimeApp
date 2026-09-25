@@ -8,6 +8,7 @@ import os
 import sys
 
 from . import APP_NAME, APP_VERSION
+from .core import i18n
 from .core.logging import get_logger, setup_logging
 
 log = get_logger("app")
@@ -104,12 +105,43 @@ def run() -> int:
     log.info("Запуск %s %s", APP_NAME, APP_VERSION)
 
     services = build_services(data_dir, cache_dir)
+    i18n.init(services.prefs.get("language"))
     ctx = AppContext(services)
-    window = MainWindow(ctx)
-    window.show()
+    holder = {"window": None}
+
+    def make_window(previous=None):
+        """Окно на текущем языке. После смены языка — новое окно на месте старого, на той же странице."""
+        window = MainWindow(ctx)
+        window.language_selected.connect(change_language)
+        if previous is not None:
+            state = previous.current_state()
+            window.setGeometry(previous.geometry())
+            if previous.isMaximized():
+                window.showMaximized()
+            else:
+                window.show()
+            if state and state[0] == "details" and state[1]:
+                window.open_anime(state[1], remember=False)
+            elif state and state[0] in window.pages:
+                window.show_page(state[0], remember=False)
+            previous.close()
+            previous.deleteLater()
+        else:
+            window.show()
+        holder["window"] = window
+        return window
+
+    def change_language(code):
+        if code == i18n.service().locale:
+            return
+        services.prefs.set("language", i18n.service().set_locale(code))
+        log.info("Язык интерфейса: %s", code)
+        make_window(holder["window"])
+
+    make_window()
     start_network(services)
 
     # Первый запуск: пользовательское соглашение и политика конфиденциальности
-    if not ensure_accepted(window, ctx.prefs):
+    if not ensure_accepted(holder["window"], ctx.prefs):
         return 0
     return app.exec()

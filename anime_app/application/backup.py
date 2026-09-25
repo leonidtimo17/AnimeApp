@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from ..core.errors import ValidationError
+from ..core.i18n import t
 from ..infrastructure.database.connection import Database
 from ..infrastructure.database.repositories import (AnimeRepository, HttpCacheRepository, LibraryRepository,
                                                     ProgressRepository)
@@ -39,9 +40,9 @@ class BackupService:
             with open(path, encoding="utf-8") as f:
                 dump = json.load(f)
         except (OSError, ValueError) as exc:
-            raise ValidationError(f"Не удалось прочитать файл: {exc}") from exc
-        if not isinstance(dump, dict) or not any(isinstance(dump.get(t), list) for t in COLUMNS):
-            raise ValidationError("Это не резервная копия AnimeApp")
+            raise ValidationError(t("backup.read_failed")) from exc
+        if not isinstance(dump, dict) or not any(isinstance(dump.get(table), list) for table in COLUMNS):
+            raise ValidationError(t("backup.not_backup"))
         n = 0
         with self.db.transaction():
             for table, allowed in COLUMNS.items():

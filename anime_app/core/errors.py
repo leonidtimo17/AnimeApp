@@ -44,3 +44,23 @@ class PlayerError(AppError):
 
 class ValidationError(AppError):
     """Неверные данные: например, файл резервной копии не того формата."""
+
+
+def describe(err, what: str | None = None) -> str:
+    """Понятный пользователю текст по типу ошибки; технические подробности — только в журнал.
+
+    what — что не получилось («Не удалось загрузить серии»).
+    """
+    from .i18n import t
+    from .logging import get_logger
+    log = get_logger("errors")
+    what = what or t("errors.load_failed")
+    if isinstance(err, NetworkError):
+        log.info("%s: %s", what, err)
+        return t("errors.network", what=what[:1].lower() + what[1:])
+    if isinstance(err, AuthenticationError):
+        return t("errors.auth", what=what)
+    if isinstance(err, (ApiError, DatabaseError)) or not isinstance(err, AppError):
+        log.warning("%s: %r", what, err)
+        return t("errors.generic", what=what)
+    return f"{what}: {err}"   # AppError/ValidationError — текст уже понятный и переведённый

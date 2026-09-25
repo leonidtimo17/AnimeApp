@@ -7,7 +7,8 @@ import urllib.parse
 
 from ...core.config import SHIKI, TTL
 from ...domain.ids import SHIKI_OFFSET
-from ...domain.shikimori import HIDDEN_KINDS, KIND_RANK, KINDS, RATINGS, SCOPE
+from ...core.i18n import t
+from ...domain.shikimori import HIDDEN_KINDS, KIND_RANK, RATINGS, SCOPE, kind_name
 from ...domain.titles import strip_bbcode, title_key
 from ..http.client import HttpClient
 
@@ -18,19 +19,19 @@ def shiki_item(x: dict) -> dict:
     """Карточка и «релиз» из ответа Shikimori (для тайтлов, которых нет на AniLibria)."""
     img = ((x.get("image") or {}).get("original") or "")
     year = (x.get("aired_on") or "")[:4]
-    parts = [p for p in (year, KINDS.get(x.get("kind"), ""),
-                         f"{x['episodes']} эп." if x.get("episodes") else "") if p]
+    parts = [p for p in (year, kind_name(x.get("kind")),
+                         t("anime.episodes_short", n=x["episodes"]) if x.get("episodes") else "") if p]
     rel = {"id": SHIKI_OFFSET + int(x["id"]),
            "name": {"main": x.get("russian") or x.get("name"), "english": x.get("name")},
            "poster": {"src": (SHIKI + img) if img and "missing" not in img else None},
            "year": int(year) if year.isdigit() else None,
-           "type": {"description": KINDS.get(x.get("kind"), "")},
+           "type": {"description": kind_name(x.get("kind"))},
            "episodes_total": x.get("episodes") or None,
            "is_ongoing": x.get("status") == "ongoing",
            "shikimori": {"id": int(x["id"]), "rating": float(x["score"]) if x.get("score") else None},
            "episodes": []}
     return {"id": rel["id"], "title": rel["name"]["main"], "subtitle": " · ".join(parts),
-            "poster": rel["poster"]["src"], "badge": "Анонс" if x.get("status") == "anons" else None,
+            "poster": rel["poster"]["src"], "badge": t("anime.announced") if x.get("status") == "anons" else None,
             "status": None, "favorite": None, "progress": None, "release": rel}
 
 

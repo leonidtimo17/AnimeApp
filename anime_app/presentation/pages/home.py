@@ -8,6 +8,7 @@ from ...core.formatting import fmt_ordinal, fmt_when
 from ..widgets.cards import CardRow
 from ..widgets.layout import Page, label, scroll_page_widget
 from ..widgets.states import error_text
+from ...core.i18n import t
 
 REMOTE_REFRESH_SEC = 600
 
@@ -17,12 +18,12 @@ class HomePage(Page):
         super().__init__()
         self.ctx = ctx
         _area, lay = scroll_page_widget(self)
-        lay.addWidget(label("Главная", "H1"))
-        self.continue_row = CardRow(ctx, "Продолжить просмотр", on_click=self._resume)
-        self.today_row = CardRow(ctx, "Выходит сегодня")
-        self.latest_row = CardRow(ctx, "Новые серии")
-        self.top_row = CardRow(ctx, "Популярное на AniLibria")
-        self.wish_row = CardRow(ctx, "Хочу посмотреть")
+        lay.addWidget(label(t("navigation.home"), "H1"))
+        self.continue_row = CardRow(ctx, t("home.continue"), on_click=self._resume)
+        self.today_row = CardRow(ctx, t("home.airing_today"))
+        self.latest_row = CardRow(ctx, t("home.latest"))
+        self.top_row = CardRow(ctx, t("home.top"))
+        self.wish_row = CardRow(ctx, t("status.planned"))
         for row in (self.continue_row, self.today_row, self.latest_row, self.wish_row, self.top_row):
             lay.addWidget(row)
         self.error = label("", "Muted", wrap=True)
@@ -44,9 +45,9 @@ class HomePage(Page):
         for r in self.ctx.progress.continue_watching():
             it = self.ctx.releases.item_from_row(r)
             if r["watched"]:
-                it["subtitle"] = f"{fmt_ordinal(r['ordinal'])} серия просмотрена · далее следующая"
+                it["subtitle"] = t("home.watched_next", n=fmt_ordinal(r["ordinal"]))
             else:
-                it["subtitle"] = f"{fmt_ordinal(r['ordinal'])} серия · {fmt_when(r['watched_at'])}"
+                it["subtitle"] = t("home.episode_when", n=fmt_ordinal(r["ordinal"]), when=fmt_when(r["watched_at"]))
             items.append(it)
         self.continue_row.set_items(items)
         self.wish_row.set_items([self.ctx.releases.item_from_row(r)
@@ -56,7 +57,7 @@ class HomePage(Page):
         self.error.setText("")
 
         def fail(err):
-            self.error.setText(error_text(err, "Не удалось загрузить данные"))
+            self.error.setText(error_text(err, t("errors.data_failed")))
             self._loaded_at = 0
 
         api, releases = self.ctx.anilibria, self.ctx.releases
@@ -73,7 +74,7 @@ class HomePage(Page):
                     it = releases.item(rel)
                     nxt = entry.get("next_release_episode_number")
                     if nxt:
-                        it["subtitle"] = f"Ожидается {nxt} серия · сегодня"
+                        it["subtitle"] = t("schedule.expected_today", n=nxt)
                     items.append(it)
             self.today_row.set_items(items)
         api.schedule(schedule, fail)

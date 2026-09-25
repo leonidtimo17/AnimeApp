@@ -12,6 +12,7 @@ from ...core.formatting import ago, fmt_ordinal, fmt_seconds
 from ...domain.shikimori import render_body
 from ...infrastructure.http.client import RequestScope
 from ..widgets.states import error_text
+from ...core.i18n import t
 
 PAGE_SIZE = 30
 
@@ -54,8 +55,8 @@ class CommentsPanel(QFrame):
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(8)
         head = QHBoxLayout()
-        self.ep_btn = QPushButton("Эта серия")
-        self.all_btn = QPushButton("Всё аниме")
+        self.ep_btn = QPushButton(t("comments.this_episode"))
+        self.all_btn = QPushButton(t("comments.whole_anime"))
         for b, m in ((self.ep_btn, "ep"), (self.all_btn, "all")):
             b.setCheckable(True)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -72,27 +73,27 @@ class CommentsPanel(QFrame):
         self.view.setOpenLinks(False)
         self.view.anchorClicked.connect(self._link)
         lay.addWidget(self.view, 1)
-        self.more = QPushButton("Показать ещё")
+        self.more = QPushButton(t("common.show_more"))
         self.more.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.more.clicked.connect(lambda: self.load(more=True))
         self.more.hide()
         lay.addWidget(self.more)
 
-        self.login_hint = QLabel("Чтобы писать комментарии, войдите через Shikimori в «Моей библиотеке».")
+        self.login_hint = QLabel(t("comments.login_hint"))
         self.login_hint.setWordWrap(True)
         lay.addWidget(self.login_hint)
         self.edit = QPlainTextEdit()
-        self.edit.setPlaceholderText("Комментарий к серии…")
+        self.edit.setPlaceholderText(t("comments.placeholder"))
         self.edit.setFixedHeight(80)
         lay.addWidget(self.edit)
         row = QHBoxLayout()
-        self.moment = QCheckBox("Момент 0:00")
+        self.moment = QCheckBox(t("comments.moment", time="0:00"))
         self.moment.setChecked(True)
-        self.spoiler = QCheckBox("Спойлер")
+        self.spoiler = QCheckBox(t("comments.spoiler"))
         row.addWidget(self.moment)
         row.addWidget(self.spoiler)
         row.addStretch(1)
-        self.send_btn = QPushButton("Отправить")
+        self.send_btn = QPushButton(t("comments.send"))
         self.send_btn.setObjectName("Send")
         self.send_btn.clicked.connect(self.send)
         row.addWidget(self.send_btn)
@@ -116,7 +117,7 @@ class CommentsPanel(QFrame):
         self.login_hint.setVisible(not logged)
         for w in self.form:
             w.setVisible(logged)
-        self.ep_btn.setText(f"{fmt_ordinal(ep.get('ordinal'))} серия")
+        self.ep_btn.setText(t("player.episode_n", n=fmt_ordinal(ep.get("ordinal"))))
         key = (rel["id"], ep["key"], self.mode)
         if key != self.for_key:
             self.for_key = key
@@ -138,7 +139,7 @@ class CommentsPanel(QFrame):
     def tick(self):
         """Обновить подпись «Момент 12:34»."""
         if self.isVisible():
-            self.moment.setText(f"Момент {fmt_seconds(self.get_state()[2])}")
+            self.moment.setText(t("comments.moment", time=fmt_seconds(self.get_state()[2])))
 
     def set_mode(self, mode):
         self.mode = mode
@@ -152,7 +153,7 @@ class CommentsPanel(QFrame):
         rel, ep, _t = self.get_state()
         sid = self.ctx.shiki.sid_of(rel["id"])
         if not sid:
-            self._show_msg("Этого тайтла нет на Shikimori — обсуждение недоступно.")
+            self._show_msg(t("comments.not_on_shikimori"))
             return
         if more:
             self.page += 1
@@ -161,19 +162,18 @@ class CommentsPanel(QFrame):
         self.scope.cancel()
         self.page = 1
         self.items_html = []
-        self._show_msg("Загружаем обсуждение…")
+        self._show_msg(t("comments.loading"))
         want = self.for_key
 
-        def got_topic(t):
+        def got_topic(topic):
             if want != self.for_key:
                 return
-            self.topic = t
-            if not t:
-                self._show_msg("На Shikimori нет темы для обсуждения.")
+            self.topic = topic
+            if not topic:
+                self._show_msg(t("comments.no_topic"))
                 return
-            if self.mode == "ep" and not t["episode"]:
-                self.items_html.append('<p style="color:#9a9aa6">Отдельной темы у этой серии нет — показано общее '
-                                       'обсуждение тайтла, ваш комментарий будет подписан номером серии.</p>')
+            if self.mode == "ep" and not topic["episode"]:
+                self.items_html.append(f'<p style="color:#9a9aa6">{html.escape(t("comments.no_episode_topic"))}</p>')
             self._fetch()
         if self.mode == "ep":
             self.ctx.shiki.topic(sid, ep.get("ordinal"), got_topic)
@@ -194,11 +194,11 @@ class CommentsPanel(QFrame):
                     f'<p style="margin:10px 0 2px"><b>{nick}</b>'
                     f'&nbsp;&nbsp;<span style="color:#9a9aa6;font-size:12px">{ago(c.get("created_at"))}</span>'
                     f'&nbsp;&nbsp;<a href="r:{c.get("id")};{nick}" style="color:#9a9aa6;font-size:12px;'
-                    f'text-decoration:none">Ответить</a></p>'
+                    f'text-decoration:none">{html.escape(t("comments.reply"))}</a></p>'
                     f'<div style="margin-bottom:8px">{render_body(c.get("body"))}</div>'
                     '<hr style="border:none;background:#2a2a33;height:1px">')
             if not items and self.page == 1:
-                self.items_html.append('<p style="color:#9a9aa6">Пока никто не написал — будьте первым.</p>')
+                self.items_html.append(f'<p style="color:#9a9aa6">{html.escape(t("comments.empty"))}</p>')
             self.more.setVisible(len(items or []) > PAGE_SIZE)
             bar = self.view.verticalScrollBar()
             keep = bar.value() if self.page > 1 else 0
@@ -206,7 +206,7 @@ class CommentsPanel(QFrame):
             bar.setValue(keep)
 
         self.ctx.shiki.comments(self.topic["id"], self.page, ok,
-                                lambda err: self._show_msg(error_text(err, "Не удалось загрузить обсуждение")),
+                                lambda err: self._show_msg(error_text(err, t("comments.load_failed"))),
                                 scope=self.scope)
 
     def _show_msg(self, text):
@@ -230,7 +230,7 @@ class CommentsPanel(QFrame):
         text = self.edit.toPlainText().strip()
         if not text or not self.topic:
             return
-        _rel, ep, t = self.get_state()
+        _rel, ep, at = self.get_state()
         self.send_btn.setEnabled(False)
 
         def ok(_d):
@@ -241,9 +241,10 @@ class CommentsPanel(QFrame):
 
         def fail(err):
             self.send_btn.setEnabled(True)
-            self._show_msg(error_text(err, "Не удалось отправить"))
+            self._show_msg(error_text(err, t("comments.send_failed")))
         self.ctx.shiki.post_comment(
             self.topic["id"], text,
+            # пометка уходит на Shikimori (русскоязычный сайт) — по-русски при любом языке интерфейса
             episode_label=None if self.topic["episode"] else f"{fmt_ordinal(ep.get('ordinal'))} серия",
-            moment=fmt_seconds(t) if self.moment.isChecked() else None,
+            moment=fmt_seconds(at) if self.moment.isChecked() else None,
             spoiler=self.spoiler.isChecked(), on_ok=ok, on_err=fail)

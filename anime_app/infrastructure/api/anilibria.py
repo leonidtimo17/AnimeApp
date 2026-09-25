@@ -3,20 +3,25 @@ from __future__ import annotations
 
 from ...core.config import ANILIBRIA_MIRRORS, TTL
 from ...core.errors import NetworkError
+from ...core.i18n import t
 from ..http.client import HttpClient, RequestHandle, RequestScope
 
-TYPES = [
-    ("TV", "ТВ"), ("ONA", "ONA"), ("WEB", "WEB"), ("OVA", "OVA"), ("OAD", "OAD"),
-    ("MOVIE", "Фильм"), ("DORAMA", "Дорама"), ("SPECIAL", "Спешл"),
-]
-SORTINGS = [
-    ("FRESH_AT_DESC", "Недавно обновлённые"),
-    ("RATING_DESC", "По рейтингу"),
-    ("YEAR_DESC", "Сначала новые"),
-    ("YEAR_ASC", "Сначала старые"),
-    ("FRESH_AT_ASC", "Давно обновлённые"),
-]
-SEASONS = [("winter", "Зима"), ("spring", "Весна"), ("summer", "Лето"), ("autumn", "Осень")]
+TYPE_CODES = ("TV", "ONA", "WEB", "OVA", "OAD", "MOVIE", "DORAMA", "SPECIAL")
+SORT_CODES = ("FRESH_AT_DESC", "RATING_DESC", "YEAR_DESC", "YEAR_ASC", "FRESH_AT_ASC")
+SEASON_CODES = ("winter", "spring", "summer", "autumn")
+
+
+# Подписи фильтров каталога — на языке интерфейса в момент вызова
+def types() -> list[tuple[str, str]]:
+    return [(c, t(f"catalog.types.{c.lower()}")) for c in TYPE_CODES]
+
+
+def sortings() -> list[tuple[str, str]]:
+    return [(c, t(f"catalog.sorts.{c.lower()}")) for c in SORT_CODES]
+
+
+def seasons() -> list[tuple[str, str]]:
+    return [(c, t(f"catalog.seasons.{c}")) for c in SEASON_CODES]
 
 
 class AniLibriaApi:

@@ -9,6 +9,7 @@ from ...domain.episodes import progress_fraction
 from ..theme import ACCENT, MUTED
 from .layout import icon_label, label
 from .thumbs import episode_thumb
+from ...core.i18n import t
 
 
 class EpisodeTile(QFrame):
@@ -43,9 +44,9 @@ class EpisodeTile(QFrame):
         if images and (preview or poster):
             images.load(preview or poster, self, draw)
         name = ep.get("name") or ep.get("name_english") or ""
-        t = label(title or f"{number} серия", "CardTitle")
-        t.setContentsMargins(11, 4, 11, 0)
-        lay.addWidget(t)
+        head = label(title or t("player.episode_n", n=number), "CardTitle")
+        head.setContentsMargins(11, 4, 11, 0)
+        lay.addWidget(head)
         n = label(missing_note or name or fmt_duration(ep.get("duration")), "CardSub")
         n.setToolTip(missing_note or name)
         n.setContentsMargins(11, 0, 11, 0)
@@ -71,20 +72,20 @@ class UpcomingTile(QFrame):
         lay.setContentsMargins(14, 10, 14, 10)
         lay.setSpacing(4)
         top = QHBoxLayout()
-        top.addWidget(label(f"{item['ordinal']} серия", "CardTitle"))
+        top.addWidget(label(t("player.episode_n", n=item["ordinal"]), "CardTitle"))
         top.addStretch(1)
         dub = item["state"] in ("no_dub", "dub")
         top.addWidget(icon_label("microphone" if dub else "calendar-days", ACCENT if dub else MUTED, 14))
         lay.addLayout(top)
         if item["state"] == "dub":
-            text = "озвучка ≈ " + fmt_air_date(item["date"])
-            tip = "Серия уже вышла в Японии. Дата озвучки — примерная, по дню выхода серий."
+            text = t("upcoming.dub_date", date=fmt_air_date(item["date"]))
+            tip = t("upcoming.dub_tip")
         elif item["state"] == "no_dub":
-            text = "вышла, ждём озвучку"
-            tip = "Серия уже вышла в Японии, озвучка появится позже"
+            text = t("upcoming.no_dub")
+            tip = t("upcoming.no_dub_tip")
         else:
             text = fmt_air_date(item["date"])
-            tip = "Дата выхода в Японии (по данным Shikimori), дальше — раз в неделю"
+            tip = t("upcoming.date_tip")
         lay.addWidget(label(text, "CardSub"))
         self.setToolTip(tip)
 
@@ -108,7 +109,7 @@ class SeasonCard(QFrame):
         self.poster.setFixedSize(134, 180)
         self.poster.setObjectName("Poster")
         lay.addWidget(self.poster)
-        year = entry.get("year") or "анонс"
+        year = entry.get("year") or t("anime.announced").lower()
         head = label(f"{entry['label']} · {year}", "SeasonCurrent" if entry.get("current") else "CardTitle")
         lay.addWidget(head)
         name = label("", "CardSub")

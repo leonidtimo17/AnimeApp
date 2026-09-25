@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (
 
 from ...core.formatting import fmt_ordinal
 from ...domain.episodes import progress_fraction
-from ...domain.library import STATUSES
+from ...domain.library import STATUSES, status_name
 from ...domain.titles import release_title
 from ..icons import icon
 from ..theme import ACCENT, BORDER, MUTED, SURFACE, SURFACE_2, TEXT
 from ..widgets.thumbs import LazyThumbs
+from ...core.i18n import t
 
 THUMB_W, THUMB_H = 150, 84
 
@@ -123,23 +124,23 @@ class WatchInfo(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 2)
         row.setSpacing(8)
-        self.dub = chip("Озвучка", "microphone")
+        self.dub = chip(t("player.translation"), "microphone")
         self.dub.setMenu(dub_menu)
-        self.fav = chip("Избранное", "heart", checkable=True)
-        self.plan = chip("Хочу посмотреть", "bookmark", checkable=True)
-        self.status = chip("Статус", "check")
+        self.fav = chip(t("library.favorite"), "heart", checkable=True)
+        self.plan = chip(t("status.planned"), "bookmark", checkable=True)
+        self.status = chip(t("anime.info.status"), "check")
         self.status_menu = QMenu(self.status)
         self.status_menu.aboutToShow.connect(self._fill_status_menu)
         self.status.setMenu(self.status_menu)
-        self.score = chip("Оценить", "star")
+        self.score = chip(t("anime.rate"), "star")
         self.score_menu = QMenu(self.score)
         self.score_menu.aboutToShow.connect(self._fill_score_menu)
         self.score.setMenu(self.score_menu)
-        self.seasons = chip("Сезоны и фильмы", "layer-group")
+        self.seasons = chip(t("anime.seasons"), "layer-group")
         self.seasons.setMenu(season_menu)
         self.seasons.hide()
-        self.fs = chip("На весь экран", "expand")
-        self.cm = chip("Обсуждение", "comments", checkable=True)   # плеер Kodik: обсуждение справа вместо серий
+        self.fs = chip(t("player.fullscreen_button"), "expand")
+        self.cm = chip(t("player.discussion"), "comments", checkable=True)   # плеер Kodik: обсуждение справа вместо серий
         self.cm.hide()
         self.cm.clicked.connect(self.comments_clicked.emit)
         for b in (self.dub, self.fav, self.plan, self.status, self.score, self.seasons, self.cm, self.fs):
@@ -154,9 +155,9 @@ class WatchInfo(QWidget):
         self.desc.setWordWrap(True)
         self.desc.setCursor(Qt.CursorShape.PointingHandCursor)
         self.desc.mousePressEvent = lambda _e: self._toggle_desc()
-        self.desc.setToolTip("Нажмите, чтобы развернуть описание")
+        self.desc.setToolTip(t("player.expand_description"))
         lay.addWidget(self.desc)
-        self.head = QLabel("Обсуждение")
+        self.head = QLabel(t("player.discussion"))
         self.head.setObjectName("WHead")
         lay.addWidget(self.head)
         self._full = ""
@@ -166,13 +167,14 @@ class WatchInfo(QWidget):
         self.release = release
         self.title.setText(release_title(release))
         name = f" · {ep['name']}" if ep and ep.get("name") else ""
-        self.sub.setText(f"{fmt_ordinal((ep or {}).get('ordinal'))} серия{name} · {idx + 1} из {total}")
+        self.sub.setText(t("player.episode_n", n=fmt_ordinal((ep or {}).get("ordinal"))) + name
+                         + " · " + t("player.i_of_n", i=idx + 1, n=total))
         self.dub.setText("  " + dub_name)
         entry = self.ctx.library.entry(release["id"])
         self.fav.setChecked(bool(entry.get("favorite")))
         self.plan.setChecked(entry.get("status") == "planned")
-        self.status.setText("  " + (STATUSES.get(entry.get("status")) or "Статус"))
-        self.score.setText(f"  Оценка {entry['score']}" if entry.get("score") else "  Оценить")
+        self.status.setText("  " + (status_name(entry.get("status")) or t("anime.info.status")))
+        self.score.setText("  " + (t("anime.score_n", n=entry["score"]) if entry.get("score") else t("anime.rate")))
         self.score.setChecked(bool(entry.get("score")))
         full = (release.get("description") or "").strip()
         if full != self._full:
@@ -184,16 +186,16 @@ class WatchInfo(QWidget):
         if not self.release:
             return
         cur = self.ctx.library.entry(self.release["id"]).get("status")
-        for key, name in STATUSES.items():
-            act = self.status_menu.addAction(name, lambda k=key: self._set_status(k))
+        for key in STATUSES:
+            act = self.status_menu.addAction(status_name(key), lambda k=key: self._set_status(k))
             act.setCheckable(True)
             act.setChecked(cur == key)
         self.status_menu.addSeparator()
-        self.status_menu.addAction("Убрать из списка", lambda: self._set_status(None))
+        self.status_menu.addAction(t("anime.remove_from_list"), lambda: self._set_status(None))
 
     def _set_status(self, key):
         self.ctx.library.set_status(self.release["id"], key)
-        self.status.setText("  " + (STATUSES.get(key) or "Статус"))
+        self.status.setText("  " + (status_name(key) or t("anime.info.status")))
         self.plan.setChecked(key == "planned")
 
     def _fill_score_menu(self):
@@ -206,11 +208,11 @@ class WatchInfo(QWidget):
             act.setCheckable(True)
             act.setChecked(cur == v)
         self.score_menu.addSeparator()
-        self.score_menu.addAction("Убрать оценку", lambda: self._set_score(None))
+        self.score_menu.addAction(t("anime.remove_score"), lambda: self._set_score(None))
 
     def _set_score(self, v):
         self.ctx.library.set_score(self.release["id"], v)
-        self.score.setText(f"  Оценка {v}" if v else "  Оценить")
+        self.score.setText("  " + (t("anime.score_n", n=v) if v else t("anime.rate")))
         self.score.setChecked(bool(v))
 
     def use_comments_button(self):
@@ -223,7 +225,7 @@ class WatchInfo(QWidget):
 
     def _render_desc(self):
         self.desc.setVisible(bool(self._full))
-        text = self._full if self._open or len(self._full) < 260 else self._full[:250].rsplit(" ", 1)[0] + "…  ещё"
+        text = self._full if self._open or len(self._full) < 260 else self._full[:250].rsplit(" ", 1)[0] + "…  " + t("common.more")
         self.desc.setText(text)
 
     def _toggle_desc(self):
@@ -236,7 +238,7 @@ class WatchInfo(QWidget):
     def _plan(self):
         planned = self.plan.isChecked()
         self.ctx.library.toggle_planned(self.release["id"], planned)
-        self.status.setText("  " + STATUSES["planned" if planned else "watching"])
+        self.status.setText("  " + status_name("planned" if planned else "watching"))
 
 
 class EpisodeSide(QWidget):
@@ -254,8 +256,8 @@ class EpisodeSide(QWidget):
         lay.setSpacing(10)
         tabs = QHBoxLayout()
         tabs.setSpacing(8)
-        self.all_btn = QPushButton("Все серии")
-        self.new_btn = QPushButton("Непросмотренные")
+        self.all_btn = QPushButton(t("player.all_episodes_plain"))
+        self.new_btn = QPushButton(t("player.unwatched"))
         for b, f in ((self.all_btn, "all"), (self.new_btn, "new")):
             b.setObjectName("WTab")
             b.setCheckable(True)
@@ -308,7 +310,7 @@ class EpisodeSide(QWidget):
     def render(self):
         if not self.release:
             return
-        self.all_btn.setText(f"Все серии · {len(self.eps)}")
+        self.all_btn.setText(t("player.all_episodes", n=len(self.eps)))
         self.list.setUpdatesEnabled(False)
         self.list.clear()
         progress = self.ctx.progress.for_anime(self.release["id"])
@@ -317,7 +319,7 @@ class EpisodeSide(QWidget):
             prog = progress.get(ep["key"]) or {}
             if self.filter == "new" and prog.get("watched") and i != self.current:
                 continue
-            text = f"{fmt_ordinal(ep.get('ordinal'))} серия" + (f"\n{ep['name']}" if ep.get("name") else "")
+            text = t("player.episode_n", n=fmt_ordinal(ep.get("ordinal"))) + (f"\n{ep['name']}" if ep.get("name") else "")
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, i)
             item.setSizeHint(QSize(0, THUMB_H + 14))

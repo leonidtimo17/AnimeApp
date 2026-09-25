@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from ..core.errors import describe
+from ..core.i18n import t
 from ..domain import taste
 from ..infrastructure.api.ai import AiApi
 from ..infrastructure.api.anilibria import AniLibriaApi
@@ -118,20 +120,20 @@ class RecommendationService:
             if state["attempt"] < 2:
                 pollinations()  # у бесплатной модели бывают неудачные ответы — пробуем ещё раз
             else:
-                on_err(error + "\nПопробуйте ещё раз через минуту.")
+                on_err(error + "\n" + t("recs.try_later"))
 
         def pollinations():
             state["attempt"] += 1
-            state["provider"] = "Pollinations (облако, бесплатно)"
-            self.ai_api.pollinations(taste.AI_SYSTEM, prompt, state["attempt"] * 17, handle,
-                                     lambda e: on_err(f"ИИ недоступен: {e}"))
+            state["provider"] = t("recs.provider_cloud")
+            self.ai_api.pollinations(taste.ai_system(), prompt, state["attempt"] * 17, handle,
+                                     lambda e: on_err(describe(e, t("recs.ai_unavailable"))))
 
         def ollama(models):
             if not models:
                 pollinations()
                 return
-            state["provider"] = f"Ollama · {models[0]} (локально)"
-            self.ai_api.ollama(models[0], taste.AI_SYSTEM, prompt,
+            state["provider"] = t("recs.provider_local", model=models[0])
+            self.ai_api.ollama(models[0], taste.ai_system(), prompt,
                                lambda text: accept(text) is not None and pollinations(),
                                lambda _e: pollinations())
 

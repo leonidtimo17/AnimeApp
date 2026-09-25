@@ -8,6 +8,7 @@ from ...core.formatting import fmt_ordinal, fmt_when
 from ..icons import icon
 from ..theme import TEXT
 from ..widgets.layout import Page, clear_layout, label, scroll_page_widget
+from ...core.i18n import t
 
 HISTORY_LIMIT = 120
 
@@ -27,9 +28,10 @@ class HistoryRow(QFrame):
         lay.addWidget(self.thumb)
         text = QVBoxLayout()
         text.addWidget(label(row["title"], "CardTitle"))
-        state = "просмотрено" if row["watched"] else \
-            f"{row['position'] // 60000}:{row['position'] // 1000 % 60:02d} из {row['duration'] // 60000} мин"
-        text.addWidget(label(f"{fmt_ordinal(row['ordinal'])} серия · {state}", "Muted"))
+        state = t("history.watched") if row["watched"] else t(
+            "history.position", pos=f"{row['position'] // 60000}:{row['position'] // 1000 % 60:02d}",
+            total=row["duration"] // 60000)
+        text.addWidget(label(f"{t('player.episode_n', n=fmt_ordinal(row['ordinal']))} · {state}", "Muted"))
         bar = QProgressBar()
         bar.setRange(0, 1000)
         bar.setValue(1000 if row["watched"] else int(1000 * row["position"] / max(1, row["duration"])))
@@ -46,7 +48,7 @@ class HistoryRow(QFrame):
             self.ctx.play.emit(self.row["id"], self.row["episode_id"])
         elif e.button() == Qt.MouseButton.RightButton:
             menu = QMenu(self)
-            menu.addAction("Открыть страницу аниме", lambda: self.ctx.open_anime.emit(self.row["id"]))
+            menu.addAction(t("anime.open_page"), lambda: self.ctx.open_anime.emit(self.row["id"]))
             menu.exec(e.globalPosition().toPoint())
 
 
@@ -56,9 +58,9 @@ class HistoryPage(Page):
         self.ctx = ctx
         _area, lay = scroll_page_widget(self)
         head = QHBoxLayout()
-        head.addWidget(label("История просмотра", "H1"))
+        head.addWidget(label(t("history.title"), "H1"))
         head.addStretch(1)
-        clear = QPushButton("  Очистить историю")
+        clear = QPushButton("  " + t("history.clear"))
         clear.setIcon(icon("trash-can", TEXT, 15))
         clear.clicked.connect(self._clear)
         head.addWidget(clear)
@@ -77,11 +79,11 @@ class HistoryPage(Page):
         self._shown = signature
         clear_layout(self.list)
         if not rows:
-            self.list.addWidget(label("Здесь появятся серии, которые вы смотрели.", "Muted"))
+            self.list.addWidget(label(t("history.empty"), "Muted"))
         for r in rows:
             self.list.addWidget(HistoryRow(self.ctx, r))
 
     def _clear(self):
-        if QMessageBox.question(self, "История", "Очистить историю? Отметки «просмотрено» сохранятся.") \
+        if QMessageBox.question(self, t("navigation.history"), t("history.clear_confirm")) \
                 == QMessageBox.StandardButton.Yes:
             self.ctx.progress.clear_history()

@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from ..core.i18n import t
 from .episodes import dub_group
 from .titles import norm
 
@@ -36,9 +37,9 @@ def choose_dub(dubs: list[dict], saved_id: str | None, preferred_name: str | Non
 def menu_groups(dubs: list[dict]) -> list[tuple[str, list[dict]]]:
     """Группы меню озвучек (пустые не показываются)."""
     groups = [
-        ("Встроенный плеер", [d for d in dubs if d["native"]]),
-        ("Плеер Kodik — озвучка", [d for d in dubs if not d["native"] and d["kind"] == "voice"]),
-        ("Плеер Kodik — субтитры", [d for d in dubs if not d["native"] and d["kind"] == "sub"]),
+        (t("dubs.builtin"), [d for d in dubs if d["native"]]),
+        (t("dubs.kodik_voice"), [d for d in dubs if not d["native"] and d["kind"] == "voice"]),
+        (t("dubs.kodik_subs"), [d for d in dubs if not d["native"] and d["kind"] == "sub"]),
     ]
     return [(title, items) for title, items in groups if items]
 

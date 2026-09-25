@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from ..core.formatting import fmt_ordinal
+from ..core.i18n import t
 
 _ROMAN = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8"}
 _ORDINALS = {"первый": "1", "второй": "2", "третий": "3", "четвертый": "4", "пятый": "5", "шестой": "6",
@@ -66,24 +67,24 @@ def strip_bbcode(text) -> str:
 
 def release_title(release: dict | None) -> str:
     name = (release or {}).get("name") or {}
-    return name.get("main") or name.get("english") or "Без названия"
+    return name.get("main") or name.get("english") or t("anime.untitled")
 
 
 def release_subtitle(release: dict) -> str:
     parts = []
     if release.get("year"):
         parts.append(str(release["year"]))
-    t = (release.get("type") or {}).get("description")
-    if t:
-        parts.append(t)
+    kind = (release.get("type") or {}).get("description")
+    if kind:
+        parts.append(kind)
     total = release.get("episodes_total")
     if total:
-        parts.append(f"{total} эп.")
+        parts.append(t("anime.episodes_short", n=total))
     return " · ".join(parts)
 
 
 def episode_label(ep: dict) -> str:
-    label = f"{fmt_ordinal(ep.get('ordinal'))} серия"
+    label = t("player.episode_n", n=fmt_ordinal(ep.get("ordinal")))
     if ep.get("name"):
         label += f" — {ep['name']}"
     return label

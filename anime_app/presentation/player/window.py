@@ -37,12 +37,17 @@ from .seekbar import SeekBar
 from .video_view import VideoView
 from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo
 from .watchdog import PlaybackWatchdog
+from ...core.i18n import t
+from ...core.logging import get_logger
+
+log = get_logger("player")
 
 SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 NEXT_COUNTDOWN = 10
 HIDE_DELAY_MS = 5000
 HOLD_MS = 450            # удержание кнопки мыши на видео — скорость 2x
 SAVE_MS = 5000           # прогресс сохраняется каждые 5 с (пока видео играет)
+MAX_RECONNECTS = 3       # потом — ошибка: повтор по пробелу/кнопке или сам, когда вернётся сеть
 THUMB_W, THUMB_H = 128, 72
 
 I_PLAY, I_PAUSE, I_PREV, I_NEXT = "play", "pause", "backward-step", "forward-step"
@@ -81,6 +86,7 @@ class PlayerWindow(QWidget):
         self.episodes = []
         self.index = 0
         self.pending_seek = None
+        self.failed = False      # поток так и не пошёл после переподключений — ждём «Повторить»
         # "auto" — качество по скорости интернета (замер при запуске приложения); "1080"/"720"/"480" — выбор
         self.quality = QualityPolicy(self.prefs.get("quality_mode", "auto"),
                                      lambda: ctx.network.state.bandwidth_mbps)
@@ -198,7 +204,7 @@ class PlayerWindow(QWidget):
         self.top.setObjectName("TopBar")
         tl = QHBoxLayout(self.top)
         tl.setContentsMargins(18, 12, 18, 30)
-        self._btn(I_BACK, "Назад (Esc)", self.close_player, tl)
+        self._btn(I_BACK, t("player.back_key"), self.close_player, tl)
         titles = QVBoxLayout()
         titles.setSpacing(0)
         self.title_lbl = QLabel()
@@ -208,7 +214,7 @@ class PlayerWindow(QWidget):
         titles.addWidget(self.title_lbl)
         titles.addWidget(self.sub_lbl)
         tl.addLayout(titles, 1)
-        self._btn("comments", "Обсуждение серии на Shikimori (C)", self.toggle_comments, tl)
+        self._btn("comments", t("comments.tooltip") + " (C)", self.toggle_comments, tl)
 
         # Нижняя панель
         self.bottom = QFrame(self.view)
@@ -223,12 +229,12 @@ class PlayerWindow(QWidget):
         bl.addWidget(self.seek)
         row = QHBoxLayout()
         row.setSpacing(2)
-        self.play_btn = self._btn(I_PLAY, "Пауза / воспроизведение (Пробел)", self.toggle_play, row)
-        self._btn(I_BACK10, "Назад на 10 секунд (←)", lambda: self.skip(-10_000), row)
-        self._btn(I_FWD10, "Вперёд на 10 секунд (→)", lambda: self.skip(10_000), row)
-        self.prev_btn = self._btn(I_PREV, "Предыдущая серия (P)", self.prev_episode, row)
-        self.next_btn = self._btn(I_NEXT, "Следующая серия (N)", self.next_episode, row)
-        self.mute_btn = self._btn(I_VOL3, "Звук (M)", self.toggle_mute, row)
+        self.play_btn = self._btn(I_PLAY, t("player.play_pause_key"), self.toggle_play, row)
+        self._btn(I_BACK10, t("player.rewind_key"), lambda: self.skip(-10_000), row)
+        self._btn(I_FWD10, t("player.forward_key"), lambda: self.skip(10_000), row)
+        self.prev_btn = self._btn(I_PREV, t("player.previous_episode") + " (P)", self.prev_episode, row)
+        self.next_btn = self._btn(I_NEXT, t("player.next_episode") + " (N)", self.next_episode, row)
+        self.mute_btn = self._btn(I_VOL3, t("player.sound") + " (M)", self.toggle_mute, row)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setObjectName("Volume")
         self.volume.setRange(0, 100)
@@ -242,34 +248,34 @@ class PlayerWindow(QWidget):
         row.addSpacing(10)
         row.addWidget(self.time_lbl)
         row.addStretch(1)
-        self.season_btn = self._btn("layer-group", "Сезоны и фильмы", lambda: None, row)
+        self.season_btn = self._btn("layer-group", t("anime.seasons"), lambda: None, row)
         self.season_menu = QMenu(self)
         self.season_btn.setMenu(self.season_menu)
         self.season_btn.hide()
-        self.dub_btn = self._btn("", "Озвучка", lambda: None, row, icon=False)
+        self.dub_btn = self._btn("", t("player.translation"), lambda: None, row, icon=False)
         self.dub_btn.setIcon(fa_icon("microphone", "white", 15))
         self.dub_menu = QMenu(self)
         self.dub_btn.setMenu(self.dub_menu)
-        self.speed_btn = self._btn("1x", "Скорость воспроизведения", lambda: None, row, icon=False)
+        self.speed_btn = self._btn("1x", t("player.speed"), lambda: None, row, icon=False)
         self.speed_btn.setMenu(self._speed_menu())
-        self.quality_btn = self._btn("HD", "Качество", lambda: None, row, icon=False)
+        self.quality_btn = self._btn("HD", t("player.quality"), lambda: None, row, icon=False)
         self.quality_menu = QMenu(self)
         self.quality_menu.aboutToShow.connect(self._fill_quality_menu)   # меню собирается при открытии
         self.quality_btn.setMenu(self.quality_menu)
-        self.sleep_btn = self._btn("moon", "Таймер сна", lambda: None, row)
+        self.sleep_btn = self._btn("moon", t("player.sleep"), lambda: None, row)
         self.sleep_menu = QMenu(self)
         self.sleep_menu.aboutToShow.connect(
             lambda: fill_sleep_menu(self.sleep_menu, self.sleep, lambda t: self.show_osd(t, 1800)))
         self.sleep_btn.setMenu(self.sleep_menu)
-        self.settings_btn = self._btn(I_SETTINGS, "Настройки", lambda: None, row)
+        self.settings_btn = self._btn(I_SETTINGS, t("settings.title"), lambda: None, row)
         self.settings_btn.setMenu(self._settings_menu())
-        self._btn(I_LIST, "Список серий (E)", self.toggle_episodes, row)
-        self.pip_btn = self._btn(I_PIP, "Мини-плеер поверх окон (I)", self.toggle_pip, row)
-        self.fs_btn = self._btn(I_FULL, "Полный экран (F / двойной клик)", self.toggle_fullscreen, row)
+        self._btn(I_LIST, t("player.episode_list") + " (E)", self.toggle_episodes, row)
+        self.pip_btn = self._btn(I_PIP, t("player.pip") + " (I)", self.toggle_pip, row)
+        self.fs_btn = self._btn(I_FULL, t("player.fullscreen_key", key=t("player.fs_keys")), self.toggle_fullscreen, row)
         bl.addLayout(row)
 
         # Кнопки «Пропустить заставку» / «Следующая серия»
-        self.skip_btn = QPushButton("Пропустить заставку  ", self.view)
+        self.skip_btn = QPushButton(t("player.skip_opening") + "  ", self.view)
         self.skip_btn.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.skip_btn.setIcon(fa_icon(I_SKIP, "white", 14))
         self.skip_btn.setObjectName("Pill")
@@ -282,10 +288,10 @@ class PlayerWindow(QWidget):
         nl = QHBoxLayout(self.next_box)
         nl.setContentsMargins(0, 0, 0, 0)
         nl.setSpacing(10)
-        self.stay_btn = QPushButton("Смотреть титры")
+        self.stay_btn = QPushButton(t("player.watch_credits"))
         self.stay_btn.setObjectName("Pill")
         self.stay_btn.clicked.connect(self._cancel_next)
-        self.go_next_btn = QPushButton("Следующая серия")
+        self.go_next_btn = QPushButton(t("player.next_episode"))
         self.go_next_btn.setIcon(fa_icon(I_NEXT, "white", 14))
         self.go_next_btn.setObjectName("PillAccent")
         self.go_next_btn.clicked.connect(self.next_episode)
@@ -308,7 +314,7 @@ class PlayerWindow(QWidget):
         self.comments = CommentsPanel(self.ctx, lambda: (self.release, self.current_episode(),
                                                           self.player.position() / 1000), self.view)
         self.comments.seek_requested.connect(
-            lambda s: (self.seek_to(s * 1000), self.show_osd(f"Перемотка на {fmt_ms(s * 1000)}")))
+            lambda s: (self.seek_to(s * 1000), self.show_osd(t("player.seek_to", time=fmt_ms(s * 1000)))))
         self.comments.closed.connect(lambda: (self._layout_overlay(), self.setFocus()))
         self.comments.hide()
 
@@ -317,7 +323,7 @@ class PlayerWindow(QWidget):
         self.osd.setObjectName("Osd")
         self.osd.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.osd.hide()
-        self.loading = QLabel("Загрузка…", self.view)
+        self.loading = QLabel(t("player.loading"), self.view)
         self.loading.setObjectName("Osd")
         self.loading.hide()
 
@@ -341,7 +347,7 @@ class PlayerWindow(QWidget):
         menu = QMenu(self)
         self.speed_actions = []
         for s in SPEEDS:
-            act = menu.addAction(f"{s:g}x" + ("  (обычная)" if s == 1 else ""), lambda s=s: self.set_speed(s))
+            act = menu.addAction(f"{s:g}x" + (f"  ({t('player.speed_normal')})" if s == 1 else ""), lambda s=s: self.set_speed(s))
             act.setCheckable(True)
             act.setChecked(s == 1.0)
             self.speed_actions.append((s, act))
@@ -349,20 +355,20 @@ class PlayerWindow(QWidget):
 
     def _settings_menu(self):
         menu = QMenu(self)
-        a1 = menu.addAction("Автопропуск заставки")
+        a1 = menu.addAction(t("player.autoskip"))
         a1.setCheckable(True)
         a1.setChecked(self.autoskip)
         a1.toggled.connect(lambda v: (setattr(self, "autoskip", v), self.prefs.set("autoskip_opening", v)))
-        a2 = menu.addAction("Автовоспроизведение следующей серии")
+        a2 = menu.addAction(t("player.autonext"))
         a2.setCheckable(True)
         a2.setChecked(self.autonext)
         a2.toggled.connect(lambda v: (setattr(self, "autonext", v), self.prefs.set("autoplay_next", v)))
-        self.fill_action = menu.addAction("Заполнить экран, без чёрных полос (Z)")
+        self.fill_action = menu.addAction(t("player.fill") + " (Z)")
         self.fill_action.setCheckable(True)
         self.fill_action.setChecked(self.view.fill)
         self.fill_action.triggered.connect(lambda _v: self.toggle_fill())
         menu.addSeparator()
-        menu.addAction("Горячие клавиши…", self._show_hotkeys)
+        menu.addAction(t("player.hotkeys"), self._show_hotkeys)
         return menu
 
     def _fill_quality_menu(self):
@@ -370,23 +376,23 @@ class PlayerWindow(QWidget):
         menu.clear()
         ep = self.current_episode()
         state = self.ctx.network.state
-        speed = f" · {state.bandwidth_mbps:.0f} Мбит/с" if state.bandwidth_mbps else ""
+        speed = " · " + t("network.mbps", n=f"{state.bandwidth_mbps:.0f}") if state.bandwidth_mbps else ""
         eff = self.quality.effective(ep)
         auto_on = self.quality.mode == "auto"
-        now = f" · сейчас {self.quality.height(self.dub_name, eff)}p" if eff and auto_on else ""
-        auto = menu.addAction(f"Авто — по скорости интернета{now}{speed}", lambda: self.set_quality("auto"))
+        now = " · " + t("player.quality_now", q=self.quality.height(self.dub_name, eff)) if eff and auto_on else ""
+        auto = menu.addAction(t("player.quality_auto_full") + now + speed, lambda: self.set_quality("auto"))
         auto.setCheckable(True)
         auto.setChecked(auto_on)
         menu.addSeparator()
         # Только те качества, что есть у этой серии; подпись — по реальному разрешению
         for key in self.quality.available(ep):
-            text = self.quality.label(self.dub_name, key) + ("  · рекомендовано" if key == self.quality.recommended else "")
+            text = self.quality.label(self.dub_name, key) + ("  · " + t("player.recommended") if key == self.quality.recommended else "")
             act = menu.addAction(text, lambda k=key: self.set_quality(k))
             act.setCheckable(True)
             act.setEnabled(bool(ep) and key not in self.quality.bad)
             act.setChecked(not auto_on and key == eff)
         menu.addSeparator()
-        check = menu.addAction("Проверяем скорость…" if state.measuring else "Проверить скорость интернета",
+        check = menu.addAction(t("network.checking") if state.measuring else t("network.check"),
                                self.check_speed)
         check.setEnabled(bool(ep) and not state.measuring)
 
@@ -517,9 +523,11 @@ class PlayerWindow(QWidget):
     def _update_quality_ui(self):
         q = self.quality.effective(self.current_episode())
         if q:
-            self.quality_btn.setText(("Авто · " if self.quality.mode == "auto" else "") + self._qlabel(q, short=True))
+            self.quality_btn.setText((t("player.quality_auto") + " · " if self.quality.mode == "auto" else "")
+                                    + self._qlabel(q, short=True))
 
     def play_index(self, idx, position=0, save=True):
+        self.failed = False
         if not 0 <= idx < len(self.episodes):
             return
         if save:
@@ -538,8 +546,8 @@ class PlayerWindow(QWidget):
         self.skip_btn.hide()
         self.ep_list.setCurrentRow(idx)
         self.title_lbl.setText(release_title(self.release))
-        self.sub_lbl.setText(episode_label(ep) + f"  ·  {idx + 1} из {len(self.episodes)}  ·  {self.dub_name}")
-        self.setWindowTitle(f"{release_title(self.release)} — {fmt_ordinal(ep.get('ordinal'))} серия")
+        self.sub_lbl.setText(episode_label(ep) + f"  ·  {t('player.i_of_n', i=idx + 1, n=len(self.episodes))}  ·  {self.dub_name}")
+        self.setWindowTitle(f"{release_title(self.release)} — {t('player.episode_n', n=fmt_ordinal(ep.get('ordinal')))}")
         self.prev_btn.setEnabled(idx > 0)
         self.next_btn.setEnabled(idx < len(self.episodes) - 1)
         self._update_marks()
@@ -549,7 +557,7 @@ class PlayerWindow(QWidget):
         self.comments.episode_changed()
         self._load_source(position)
         if position and position > 15_000:
-            self.show_osd(f"Продолжаем с {fmt_ms(position)}", 2200)
+            self.show_osd(t("player.resuming", time=fmt_ms(position)), 2200)
 
     def _load_source(self, position):
         ep = self.current_episode()
@@ -575,15 +583,15 @@ class PlayerWindow(QWidget):
         if not ep:
             return
         url = ep["streams"].get(self.quality.available(ep)[0])
-        self.show_osd("Проверяем скорость интернета…", 3500)
+        self.show_osd(t("network.checking"), 3500)
 
         def done(state):
             self.quality.bandwidth_updated()
             if state.bandwidth_mbps is None:
-                self.show_osd("Не удалось измерить скорость", 2500)
+                self.show_osd(t("network.check_failed"), 2500)
                 return
             rec = self.quality.choose(self.current_episode())
-            self.show_osd(f"Интернет ~{state.bandwidth_mbps:.0f} Мбит/с → {self._qlabel(rec)} (рекомендовано)", 3000)
+            self.show_osd(t("network.check_result", n=f"{state.bandwidth_mbps:.0f}", q=self._qlabel(rec)), 3000)
             if self.quality.mode == "auto" and rec:
                 self._load_source(self._cur_pos())
         self.ctx.network.measure_now(lambda cb: cb(url), done)
@@ -599,18 +607,21 @@ class PlayerWindow(QWidget):
 
     # ============================================================ playback
     def toggle_play(self):
+        if self.failed:
+            self.retry()
+            return
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
-            self.show_osd("Пауза")
+            self.show_osd(t("player.pause"))
             self.save_progress()
         else:
             self.player.play()
-            self.show_osd("Воспроизведение", 700)
+            self.show_osd(t("player.playing"), 700)
         self.poke()
 
     def skip(self, delta):
         self.seek_to(self.player.position() + delta)
-        self.show_osd(("+" if delta > 0 else "−") + f"{abs(delta) // 1000} с")
+        self.show_osd(("+" if delta > 0 else "−") + t("player.seconds", n=abs(delta) // 1000))
 
     def seek_to(self, ms):
         dur = self.player.duration()
@@ -624,7 +635,7 @@ class PlayerWindow(QWidget):
         self.speed_btn.setText(f"{s:g}x")
         for sp, act in self.speed_actions:
             act.setChecked(sp == s)
-        self.show_osd(f"Скорость {s:g}x")
+        self.show_osd(t("player.speed_n", n=f"{s:g}"))
 
     def change_speed(self, direction):
         cur = self.player.playbackRate()
@@ -641,7 +652,7 @@ class PlayerWindow(QWidget):
             self.player.pause()
         eff = self.quality.effective(self.current_episode())
         if eff:
-            self.show_osd(("Авто: " if q == "auto" else "Качество ") + self._qlabel(eff))
+            self.show_osd(t("player.quality_auto_n" if q == "auto" else "player.quality_n", q=self._qlabel(eff)))
 
     def _set_volume(self, v):
         self.audio.setVolume(v / 100)
@@ -652,13 +663,13 @@ class PlayerWindow(QWidget):
 
     def change_volume(self, delta):
         self.volume.setValue(max(0, min(100, self.volume.value() + delta)))
-        self.show_osd(f"Громкость {self.volume.value()}%")
+        self.show_osd(t("player.volume_n", n=self.volume.value()))
 
     def toggle_mute(self):
         self.audio.setMuted(not self.audio.isMuted())
         self.prefs.set("muted", self.audio.isMuted())
         self._update_mute_icon()
-        self.show_osd("Звук выключен" if self.audio.isMuted() else "Звук включён")
+        self.show_osd(t("player.muted") if self.audio.isMuted() else t("player.unmuted"))
 
     def _update_mute_icon(self):
         v = self.volume.value()
@@ -679,7 +690,7 @@ class PlayerWindow(QWidget):
             self.opening_skipped = True
             self.player.setPosition(int(stop * 1000))
             self.skip_btn.hide()
-            self.show_osd("Заставка пропущена")
+            self.show_osd(t("player.opening_skipped"))
 
     def _cancel_next(self):
         self.next_cancelled = True
@@ -692,7 +703,7 @@ class PlayerWindow(QWidget):
             self.count_timer.stop()
             self.next_episode()
             return
-        self.go_next_btn.setText(f"Следующая серия через {self.countdown}")
+        self.go_next_btn.setText(t("player.next_in", n=self.countdown))
         self.next_box.adjustSize()
         self._layout_overlay()
 
@@ -753,10 +764,10 @@ class PlayerWindow(QWidget):
             self.next_box.show()
             if self.autonext:
                 self.countdown = NEXT_COUNTDOWN
-                self.go_next_btn.setText(f"Следующая серия через {self.countdown}")
+                self.go_next_btn.setText(t("player.next_in", n=self.countdown))
                 self.count_timer.start()
             else:
-                self.go_next_btn.setText("Следующая серия")
+                self.go_next_btn.setText(t("player.next_episode"))
             self._layout_overlay()
         elif not show_next and self.next_box.isVisible():
             self.next_box.hide()
@@ -781,18 +792,18 @@ class PlayerWindow(QWidget):
         if status == S.EndOfMedia:
             self.save_progress(force_end=True)
             if self.sleep.episode_ended():
-                self.show_osd("Таймер сна — серия закончилась. Спокойной ночи!", 4000)
+                self.show_osd(t("sleep.episode_ended"), 4000)
             elif self.autonext and self.index < len(self.episodes) - 1 and not self.next_cancelled:
                 self.next_episode()
             elif self.index == len(self.episodes) - 1:
                 self._maybe_complete()
-                self.show_osd("Это была последняя серия", 3000)
+                self.show_osd(t("player.last_episode"), 3000)
 
     def _on_stall(self):
         """В «Авто»: если видео часто подгружается — понижаем качество (без замеров скорости)."""
         lower = self.quality.stalled(self.current_episode(), time.time())
         if lower:
-            self.show_osd(f"Медленный интернет — переключили на {self._qlabel(lower)}", 2500)
+            self.show_osd(t("player.slow_switched", q=self._qlabel(lower)), 2500)
             self._load_source(self._cur_pos())
 
     def _on_state(self, state):
@@ -821,18 +832,31 @@ class PlayerWindow(QWidget):
         self.quality.network_changed()
         if self.current_episode():
             self.watchdog.hurry()
+            if self.failed and self.ctx.network.state.is_online:   # сеть вернулась — одна попытка сама
+                self.retry()
+
+    def retry(self):
+        """«Повторить» после ошибки: та же серия с того же места, счётчик попыток — заново."""
+        self.failed = False
+        self.watchdog.tries = 0
+        self._recover()
 
     def _recover(self):
-        """Переподключиться к потоку с того же места; со второй попытки — со свежими ссылками."""
+        """Переподключиться к потоку с того же места; со второй попытки — со свежими ссылками.
+        Не больше MAX_RECONNECTS подряд — дальше ошибка, без бесконечных повторов."""
+        pos = self.pending_seek or self.player.position()
+        if self.watchdog.tries >= MAX_RECONNECTS:
+            self.failed = True
+            self.pending_seek = pos
+            self.loading.hide()
+            log.warning("Поток недоступен после %d переподключений", self.watchdog.tries)
+            self.show_osd(t("player.errors.network") + "\n" + t("player.retry_hint"), 600_000)
+            return
         self.watchdog.tries += 1
         self.watchdog.reset()
         tries = self.watchdog.tries
-        pos = self.pending_seek or self.player.position()
         self.ctx.reset_connections()
-        if tries > 3:
-            self.show_osd("Нет соединения — пробуем снова… Проверьте интернет или VPN", 4000)
-        else:
-            self.show_osd("Связь прервалась — переподключаемся…", 2500)
+        self.show_osd(t("player.reconnecting"), 2500)
         if tries >= 2:
             self._refresh_streams(pos)
         else:
@@ -878,11 +902,12 @@ class PlayerWindow(QWidget):
             return
         failed, lower = self.quality.failed(self.current_episode())
         if lower:
-            self.show_osd(f"Нет {self._qlabel(failed)}, переключаемся на {self._qlabel(lower)}", 2500)
+            self.show_osd(t("player.quality_fallback", failed=self._qlabel(failed), q=self._qlabel(lower)), 2500)
             self._load_source(self.pending_seek or self.player.position())
         else:
             self.loading.hide()
-            self.show_osd(f"Не удалось воспроизвести: {text}", 5000)
+            log.warning("Видео не воспроизводится: %s", text)
+            self.show_osd(t("player.errors.playback"), 5000)
 
     # ============================================================ progress
     def save_progress(self, force_end=False):
@@ -913,7 +938,7 @@ class PlayerWindow(QWidget):
         if all((progress.get(e["key"]) or {}).get("watched") for e in self.episodes):
             if self.ctx.library.entry(rel["id"]).get("status") != "completed":
                 self.ctx.library.set_status(rel["id"], "completed")
-                self.show_osd("Тайтл просмотрен полностью 🎉", 3000)
+                self.show_osd(t("player.title_completed"), 3000)
 
     # ============================================================ controls visibility
     def show_osd(self, text, ms=1100):
@@ -952,7 +977,7 @@ class PlayerWindow(QWidget):
         self.view.set_fill(fill)
         self.prefs.set("zoom_fill", fill)
         self.fill_action.setChecked(fill)
-        self.show_osd("Заполнить экран" if fill else "Весь кадр")
+        self.show_osd(t("player.fill_on") if fill else t("player.fill_off"))
 
     def toggle_comments(self):
         if self.comments.isVisible():
@@ -976,14 +1001,14 @@ class PlayerWindow(QWidget):
         if self.sleep.due() and self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()
             self.save_progress()
-            self.show_osd("Таймер сна — видео остановлено. Спокойной ночи!", 4000)
+            self.show_osd(t("sleep.stopped"), 4000)
 
     def _hold_start(self):
         if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState or self.pip:
             return
         self._hold_rate = self.player.playbackRate()
         self.player.setPlaybackRate(2.0)
-        self.show_osd("▶▶  Скорость 2x — пока держите кнопку мыши", 60_000)
+        self.show_osd("▶▶  " + t("player.hold_2x"), 60_000)
 
     def _hold_end(self):
         """True, если отпустили после ускорения (тогда клик не считается паузой)."""
@@ -1041,7 +1066,7 @@ class PlayerWindow(QWidget):
             self.setGeometry(area.right() - w - 24, area.bottom() - h - 24, w, h)
             self._apply_mode()
             self.show()
-            self.show_osd("Мини-плеер · I — вернуть")
+            self.show_osd(t("player.pip_on"))
         else:
             self.pip = False
             self.pip_toggled.emit(False)    # главное окно встраивает плеер обратно
@@ -1071,17 +1096,14 @@ class PlayerWindow(QWidget):
 
     def _show_hotkeys(self):
         self.show_osd(
-            "Пробел/K — пауза   ←/→ — 10 с   ↑/↓ — громкость\n"
-            "F — полный экран   M — звук   N/P — серии   S — пропустить заставку\n"
-            "[ / ] — скорость   E — серии   C — обсуждение   I — мини-плеер   Z — заполнить экран   0–9 — перейти в %\n"
-            "Зажать кнопку мыши на видео — скорость 2x",
+            t("player.hotkeys_text"),
             6000,
         )
 
     # ============================================================ events
     def eventFilter(self, obj, e):
-        t = e.type()
-        if t == e.Type.MouseMove:
+        et = e.type()
+        if et == e.Type.MouseMove:
             if self.pip and self.drag_origin is not None and e.buttons() & Qt.MouseButton.LeftButton:
                 delta = e.globalPosition().toPoint() - self.drag_origin[0]
                 if delta.manhattanLength() > 4:
@@ -1094,13 +1116,13 @@ class PlayerWindow(QWidget):
             if self._last_mouse is None or (p - self._last_mouse).manhattanLength() > 3:
                 self._last_mouse = p
                 self.poke()
-        elif t == e.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
+        elif et == e.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
             if self.ep_list.isVisible():
                 self.ep_list.hide()
                 return True
             self.drag_origin = (e.globalPosition().toPoint(), self.pos(), False)
             self.hold_timer.start()
-        elif t == e.Type.MouseButtonRelease and e.button() == Qt.MouseButton.LeftButton:
+        elif et == e.Type.MouseButtonRelease and e.button() == Qt.MouseButton.LeftButton:
             moved = self.drag_origin and self.drag_origin[2]
             self.drag_origin = None
             if self._hold_end():
@@ -1108,11 +1130,11 @@ class PlayerWindow(QWidget):
             if not moved:
                 self.click_timer.start()
             return True
-        elif t == e.Type.MouseButtonDblClick:
+        elif et == e.Type.MouseButtonDblClick:
             self.click_timer.stop()
             self.toggle_fullscreen()
             return True
-        elif t == e.Type.Wheel:
+        elif et == e.Type.Wheel:
             if not self._video_only():
                 # на странице колесо над видео прокручивает страницу (как на YouTube), громкость — ↑/↓
                 QApplication.sendEvent(self.left_scroll.verticalScrollBar(), e)

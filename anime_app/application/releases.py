@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..core.errors import AppError
+from ..core.i18n import t
 from ..domain.ids import SHIKI_OFFSET, is_animelib_id, is_shiki_id
 from ..domain.library import card_item
 from ..domain.titles import release_subtitle, release_title
@@ -36,7 +37,7 @@ class ReleaseService:
             slug = (self.anime.release(release_id) or {}).get("animelib")
             if not slug:
                 if on_err:
-                    on_err(AppError("Тайтл не найден в кэше — откройте его заново через поиск"))
+                    on_err(AppError(t("anime.not_cached")))
                 return None
             return self.animelib.anime(slug, on_ok, on_err)
         return self.anilibria.release(release_id, on_ok, on_err, fresh=fresh, scope=scope)
@@ -62,7 +63,7 @@ class ReleaseService:
     def item(self, release: dict) -> dict:
         entry = self.library.entry(release["id"])
         return card_item(release["id"], release_title(release), release_subtitle(release), self.poster_url(release),
-                         badge="Онгоинг" if release.get("is_ongoing") else None, status=entry.get("status"),
+                         badge=t("anime.ongoing") if release.get("is_ongoing") else None, status=entry.get("status"),
                          favorite=entry.get("favorite"), release=release)
 
     def items(self, releases: list[dict]) -> list[dict]:

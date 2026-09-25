@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..core.errors import describe
+from ..core.i18n import t
 from ..domain.titles import norm
 from ..infrastructure.api.anilibria import AniLibriaApi
 from ..infrastructure.api.shikimori import ShikimoriApi
@@ -95,7 +97,7 @@ class SearchSession:
 
         def fail(err):
             self.loading = False
-            on_err(f"Ошибка сети: {err}")
+            on_err(describe(err, t("search.failed")))
 
         f = self.filters
         self.anilibria.catalog(ok, fail, page=s.page + 1, limit=30, search=self.query or None,

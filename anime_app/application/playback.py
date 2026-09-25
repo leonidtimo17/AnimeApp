@@ -7,7 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from ..core.errors import AppError
+from ..core.errors import AppError, describe
+from ..core.i18n import t
 from .releases import ReleaseService
 from .sources import SourceResolver
 
@@ -46,7 +47,7 @@ class PlaybackService:
                     return
                 dub = self.sources.choose(release, dubs)
                 if not dub:
-                    on_error("Серии этого аниме не нашлись ни в одном источнике.")
+                    on_error(t("player.no_episodes_anywhere"))
                     return
 
                 def eps_ok(eps):
@@ -68,11 +69,11 @@ class PlaybackService:
                     self.shiki.pull_progress(release["id"], eps, with_progress)
 
                 self.sources.episodes(release, dub, eps_ok,
-                                      lambda err: current() and on_error(f"Не удалось загрузить серии: {err}"))
+                                      lambda err: current() and on_error(describe(err, t("player.episodes_failed"))))
             self.sources.find_dubs(release, got)
 
         self.releases.load_or_cached(release_id, with_release,
-                                     lambda err: current() and on_error(f"Не удалось загрузить тайтл: {err}"),
+                                     lambda err: current() and on_error(describe(err, t("anime.load_failed"))),
                                      fresh=True)
 
     def switch_dub(self, release: dict, dub: dict, key: str | None, position_ms: int,
@@ -82,11 +83,11 @@ class PlaybackService:
 
         def ok(eps):
             same = key if any(e["key"] == key for e in eps) else None
-            note = (f"В озвучке «{dub['name']}» нет {key} серии — открываем ближайшую доступную."
+            note = (t("player.dub_missing_episode", dub=dub["name"], n=key)
                     if key and not same else None)
             plan = PlaybackPlan(release, dub, [], eps, same, position_ms if same and position_ms > 5000 else None)
             on_ready(plan, note)
 
         def fail(err: AppError):
-            on_error(f"Не удалось сменить озвучку: {err}")
+            on_error(describe(err, t("player.dub_switch_failed")))
         self.sources.episodes(release, dub, ok, fail)

@@ -8,6 +8,7 @@ from ..icons import icon
 from ..theme import ACCENT, MUTED, TEXT
 from ..widgets.cards import CardRow
 from ..widgets.layout import ExpandingLabel, Page, clear_layout, label, scroll_page_widget
+from ...core.i18n import t
 
 
 class GenreBars(QWidget):
@@ -72,18 +73,17 @@ class RecommendationsPage(Page):
         _area, lay = scroll_page_widget(self)
 
         head = QHBoxLayout()
-        head.addWidget(label("Для вас", "H1"))
+        head.addWidget(label(t("navigation.recs"), "H1"))
         head.addStretch(1)
-        self.refresh_btn = QPushButton("  Обновить")
+        self.refresh_btn = QPushButton("  " + t("common.refresh"))
         self.refresh_btn.setIcon(icon("rotate-right", TEXT, 14))
         self.refresh_btn.clicked.connect(lambda: self.rebuild(force=True))
         head.addWidget(self.refresh_btn)
-        self.ai_btn = QPushButton("  ИИ-разбор вкуса")
+        self.ai_btn = QPushButton("  " + t("recs.ai_button"))
         self.ai_btn.setObjectName("Primary")
         self.ai_btn.setIcon(icon("wand-magic-sparkles", "white", 15))
         self.ai_btn.setIconSize(QSize(15, 15))
-        self.ai_btn.setToolTip("Локальная Ollama (если установлена) или бесплатный Pollinations.\n"
-                               "ИИ получает только названия, жанры и годы из ваших списков.")
+        self.ai_btn.setToolTip(t("recs.ai_tooltip"))
         self.ai_btn.clicked.connect(self.run_ai)
         head.addWidget(self.ai_btn)
         lay.addLayout(head)
@@ -98,7 +98,7 @@ class RecommendationsPage(Page):
         tb.setContentsMargins(22, 18, 22, 20)
         tb.setSpacing(14)
         th = QHBoxLayout()
-        th.addWidget(label("Ваш вкус", "H2"))
+        th.addWidget(label(t("recs.your_taste"), "H2"))
         th.addStretch(1)
         tb.addLayout(th)
         self.stats = QGridLayout()
@@ -106,7 +106,7 @@ class RecommendationsPage(Page):
         tb.addLayout(self.stats)
         self.taste_text = ExpandingLabel("", "Description")
         tb.addWidget(self.taste_text)
-        tb.addWidget(label("Любимые жанры", "FilterTitle"))
+        tb.addWidget(label(t("recs.favorite_genres"), "FilterTitle"))
         self.bars = GenreBars()
         tb.addWidget(self.bars)
         lay.addWidget(self.taste_box)
@@ -118,19 +118,19 @@ class RecommendationsPage(Page):
         ab.setContentsMargins(22, 18, 22, 20)
         ab.setSpacing(10)
         ah = QHBoxLayout()
-        ah.addWidget(label("Разбор от ИИ", "H2"))
+        ah.addWidget(label(t("recs.ai_title"), "H2"))
         ah.addStretch(1)
         self.ai_provider = label("", "Muted")
         ah.addWidget(self.ai_provider)
         ab.addLayout(ah)
         self.ai_text = ExpandingLabel("", "AiText")
         ab.addWidget(self.ai_text)
-        self.ai_row = CardRow(ctx, "ИИ советует")
+        self.ai_row = CardRow(ctx, t("recs.ai_suggests"))
         ab.addWidget(self.ai_row)
         lay.addWidget(self.ai_box)
         self.ai_box.hide()
 
-        self.main_row = CardRow(ctx, "Рекомендуем вам")
+        self.main_row = CardRow(ctx, t("recs.recommended"))
         lay.addWidget(self.main_row)
         self.because = QVBoxLayout()
         self.because.setSpacing(24)
@@ -147,17 +147,16 @@ class RecommendationsPage(Page):
             return
         self.busy = True
         self.signature = self.service.signature()
-        self.status.setText("Анализируем ваши списки…")
+        self.status.setText(t("recs.analyzing"))
         self.service.build(self._with_profile, self._with_recommendations)
 
     def _with_profile(self, p):
         self.profile = p
         self._render_taste(p)
         if p.empty:
-            self.status.setText("Пока мало данных: добавьте несколько аниме в «Избранное», «Просмотрено» "
-                                "или «Смотрю» — и рекомендации станут точнее. А пока — популярное.")
+            self.status.setText(t("recs.little_data"))
         else:
-            self.status.setText("Подбираем аниме под ваш вкус…")
+            self.status.setText(t("recs.picking"))
 
     def _with_recommendations(self, rec):
         self.busy = False
@@ -166,26 +165,25 @@ class RecommendationsPage(Page):
         for s, rel, reason in rec.scored[:30]:
             it = self.ctx.releases.item(rel)
             if not rec.profile.empty:
-                it["subtitle"] = f"{s:.0%} совпадение · {reason}"
+                it["subtitle"] = t("recs.match", share=f"{s:.0%}", reason=reason)
             items.append(it)
-        self.main_row.set_items(items, "Не удалось подобрать — проверьте интернет")
+        self.main_row.set_items(items, t("recs.failed"))
         clear_layout(self.because)
         for liked, picks in rec.because:
-            row = CardRow(self.ctx, f"Потому что вам понравилось «{release_title(liked)}»")
+            row = CardRow(self.ctx, t("recs.because", title=release_title(liked)))
             row.set_items(self.ctx.releases.items(picks))
             self.because.addWidget(row)
         if not rec.profile.empty:
-            self.status.setText(f"Проанализировано тайтлов: {len(rec.profile.titles)}, "
-                                f"кандидатов: {rec.candidates}.")
+            self.status.setText(t("recs.analyzed", n=len(rec.profile.titles), candidates=rec.candidates))
 
     def _render_taste(self, p):
         clear_layout(self.stats)
         fav_type = next(iter(p.types), "—")
         tiles = [
-            (sum(p.status_counts.values()), "в ваших списках"),
-            (p.episodes, "серий просмотрено"),
-            (f"{p.hours:.0f} ч", "проведено за просмотром"),
-            (fav_type, "любимый формат"),
+            (sum(p.status_counts.values()), t("recs.stat_in_lists")),
+            (p.episodes, t("recs.stat_episodes")),
+            (t("recs.hours", n=f"{p.hours:.0f}"), t("recs.stat_hours")),
+            (fav_type, t("recs.stat_format")),
         ]
         for i, (v, cap) in enumerate(tiles):
             self.stats.addWidget(stat_tile(v, cap), 0, i)
@@ -196,32 +194,31 @@ class RecommendationsPage(Page):
     # ------------------------------------------------------------ ИИ
     def run_ai(self):
         if not self.scored or not self.profile:
-            self.status.setText("Сначала дождитесь подбора рекомендаций.")
+            self.status.setText(t("recs.wait_first"))
             return
         self.ai_btn.setEnabled(False)
-        self.ai_btn.setText("  ИИ думает…")
+        self.ai_btn.setText("  " + t("recs.ai_thinking"))
         self.ai_box.show()
-        self.ai_text.setText("Отправляем ИИ ваш профиль (только названия, жанры и годы)…")
+        self.ai_text.setText(t("recs.ai_sending"))
         self.ai_row.set_items([])
 
         def done():
             self.ai_btn.setEnabled(True)
-            self.ai_btn.setText("  ИИ-разбор вкуса")
+            self.ai_btn.setText("  " + t("recs.ai_button"))
 
         def ok(res):
             done()
             self.ai_provider.setText(res["provider"])
-            self.ai_text.setText(res["analysis"] or "ИИ не написал разбор.")
+            self.ai_text.setText(res["analysis"] or t("recs.ai_no_analysis"))
             items = []
             for rel, reason in res["picks"]:
                 it = self.ctx.releases.item(rel)
                 it["subtitle"] = reason
                 items.append(it)
-            self.ai_row.set_items(items, "ИИ не выбрал аниме — попробуйте ещё раз")
+            self.ai_row.set_items(items, t("recs.ai_no_picks"))
 
         def err(msg):
             done()
-            self.ai_text.setText(f"{msg}\n\nРекомендации ниже работают и без ИИ. Для приватного локального ИИ "
-                                 "установите Ollama (ollama.com) и скачайте модель, например: ollama pull qwen2.5")
+            self.ai_text.setText(f"{msg}\n\n{t('recs.ai_hint')}")
 
         self.service.ai_analyze(self.profile, self.scored, ok, err)

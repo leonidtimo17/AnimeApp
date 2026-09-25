@@ -20,6 +20,7 @@ GLYPHS = {
     "layer-group": 0xF5FD, "film": 0xF008, "filter": 0xF0B0, "robot": 0xF544,
     "wand-magic-sparkles": 0xE2CA, "chart-simple": 0xE473, "table-cells-large": 0xF009,
     "thumbs-up": 0xF164, "sliders": 0xF1DE, "fire": 0xF06D, "moon": 0xF186, "comments": 0xF086, "link": 0xF0C1,
+    "language": 0xF1AB,
 }
 
 _families = {}

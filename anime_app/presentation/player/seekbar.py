@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QLabel, QSlider
 
 from ...core.formatting import fmt_ms
 from ..theme import ACCENT
+from ...core.i18n import t
 
 
 class SeekBar(QSlider):
@@ -62,7 +63,7 @@ class SeekBar(QSlider):
         text = fmt_ms(ms)
         for a, b in self.marks:
             if a <= ms <= b:
-                text += "  · заставка" if a < self.maximum() / 2 else "  · титры"
+                text += "  · " + (t("player.opening") if a < self.maximum() / 2 else t("player.credits"))
         self.tip.setText(text)
         self.tip.adjustSize()
         p = self.mapTo(self.tip.parentWidget(), QPointF(self.hover_x, 0).toPoint())

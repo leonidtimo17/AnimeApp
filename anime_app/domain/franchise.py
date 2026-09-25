@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from typing import Callable
 
+from ..core.i18n import t
 from .ids import shiki_id
 
 HIDDEN_KINDS = {"Клип", "Реклама", "Проморолик"}
-TYPE_LABELS = {"MOVIE": "Фильм", "OVA": "OVA", "ONA": "ONA", "SPECIAL": "Спешл", "OAD": "OAD", "WEB": "WEB"}
+TYPE_LABELS = {"OVA": "OVA", "ONA": "ONA", "OAD": "OAD", "WEB": "WEB"}
 
 
 def is_movie(release: dict) -> bool:
@@ -20,11 +21,11 @@ def is_movie(release: dict) -> bool:
 
 def entry_label(kind: str, season_no: int) -> str:
     if kind in ("TV Сериал", "TV"):
-        return f"{season_no} сезон"
+        return t("anime.season_n", n=season_no)
     if kind in ("Фильм", "MOVIE"):
-        return "Фильм"
+        return t("anime.kinds.movie")
     if "Спецвыпуск" in kind or kind == "SPECIAL":
-        return "Спешл"
+        return t("anime.kinds.special")
     return TYPE_LABELS.get(kind, kind)
 
 

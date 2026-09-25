@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from ..core.cache import TTLCache
 from ..core.config import MemoryTTL
 from ..core.errors import AppError, AuthenticationError
+from ..core.i18n import t
 from ..core.logging import get_logger
 from ..domain.ids import SHIKI_OFFSET
 from ..domain.library import watched_count
@@ -84,7 +85,7 @@ class ShikimoriAccount(QObject):
     def _token(self, form, on_ok, on_err):
         def ok(d):
             if not d.get("access_token"):
-                on_err(AuthenticationError("Shikimori не выдал доступ"))
+                on_err(AuthenticationError(t("shikimori.access_denied")))
                 return
             on_ok({"access": d["access_token"], "refresh": d.get("refresh_token"),
                    "expires": time.time() + (d.get("expires_in") or 86400)})
@@ -112,7 +113,7 @@ class ShikimoriAccount(QObject):
         on_err = on_err or (lambda err: log.info("Shikimori %s: %s", path, err))
         a = self._auth()
         if not a.get("access"):
-            on_err(AuthenticationError("Вы не вошли в Shikimori"))
+            on_err(AuthenticationError(t("shikimori.not_signed_in")))
             return
 
         def send(a):

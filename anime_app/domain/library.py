@@ -1,13 +1,15 @@
 """Списки пользователя и правило «серия просмотрена»."""
 from __future__ import annotations
 
-STATUSES = {
-    "watching": "Смотрю",
-    "planned": "Хочу посмотреть",
-    "completed": "Просмотрено",
-    "postponed": "Отложено",
-    "dropped": "Брошено",
-}
+from ..core.i18n import t
+
+STATUSES = ("watching", "planned", "completed", "postponed", "dropped")
+
+
+def status_name(key: str | None) -> str:
+    """Название списка на языке интерфейса; пустая строка — нет статуса."""
+    return t(f"status.{key}") if key in STATUSES else ""
+
 # Статусы, при которых запуск серии переводит тайтл в «Смотрю»
 AUTO_WATCHING_FROM = (None, "planned", "postponed")
 

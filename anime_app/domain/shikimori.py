@@ -4,15 +4,25 @@ from __future__ import annotations
 import html
 import re
 
+from ..core.i18n import t
+
 SCOPE = "user_rates comments"
 TO_SHIKI = {"planned": "planned", "watching": "watching", "completed": "completed",
             "postponed": "on_hold", "dropped": "dropped"}
 FROM_SHIKI = {"planned": "planned", "watching": "watching", "rewatching": "watching", "completed": "completed",
               "on_hold": "postponed", "dropped": "dropped"}
-STATUS_NAMES = {"watching": "смотрю", "completed": "просмотрено", "planned": "запланировано",
-                "on_hold": "отложено", "dropped": "брошено", "rewatching": "пересматриваю"}
-KINDS = {"tv": "ТВ", "movie": "Фильм", "ova": "OVA", "ona": "ONA", "special": "Спешл",
-         "tv_special": "ТВ-спешл", "music": "Клип", "pv": "Промо", "cm": "Реклама"}
+SHIKI_STATUSES = ("watching", "completed", "planned", "on_hold", "dropped", "rewatching")
+KINDS = ("tv", "movie", "ova", "ona", "special", "tv_special", "music", "pv", "cm")
+
+
+def shiki_status_name(key: str) -> str:
+    """Статус списка Shikimori («смотрю», «брошено»…) на языке интерфейса."""
+    return t(f"shikimori.statuses.{key}") if key in SHIKI_STATUSES else key
+
+
+def kind_name(kind: str | None) -> str:
+    """Вид тайтла Shikimori (tv, movie…) на языке интерфейса."""
+    return t(f"anime.kinds.{kind}") if kind in KINDS else (kind or "")
 HIDDEN_KINDS = ("music", "pv", "cm")
 KIND_RANK = {"tv": 0, "movie": 1, "ona": 2, "ova": 3, "tv_special": 4, "special": 5}
 RATINGS = {"g": "0+", "pg": "6+", "pg_13": "13+", "r": "16+", "r_plus": "18+", "rx": "18+"}

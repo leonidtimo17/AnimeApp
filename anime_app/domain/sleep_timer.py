@@ -7,6 +7,8 @@ from __future__ import annotations
 import time
 from typing import Callable
 
+from ..core.i18n import t
+
 CHOICES = (15, 30, 45, 60, 90)
 
 
@@ -34,14 +36,14 @@ class SleepTimer:
         self.until = self._clock() + minutes * 60 if minutes else 0.0
         self._changed()
         if minutes:
-            return f"Таймер сна: остановлю через {minutes} мин"
-        return "Остановлю после этой серии" if after_episode else "Таймер сна выключен"
+            return t("sleep.set_minutes", n=minutes)
+        return t("sleep.after_episode_set") if after_episode else t("sleep.off_set")
 
     def menu_items(self) -> list[tuple[str, int, bool, bool]]:
         """[(текст, минуты, после серии, выбрано)]."""
         timed = self.until > self._clock()
-        items = [("Выключен", 0, False, not self.active), ("После этой серии", 0, True, self.after_episode)]
-        items += [(f"Через {m} минут", m, False, timed and self.minutes == m) for m in CHOICES]
+        items = [(t("sleep.off"), 0, False, not self.active), (t("sleep.after_episode"), 0, True, self.after_episode)]
+        items += [(t("sleep.in_minutes", n=m), m, False, timed and self.minutes == m) for m in CHOICES]
         return items
 
     # ------------------------------------------------------------ срабатывание

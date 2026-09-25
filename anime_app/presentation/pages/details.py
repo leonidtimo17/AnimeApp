@@ -10,7 +10,7 @@ from ...core.formatting import fmt_duration, fmt_ordinal
 from ...domain.dubs import alternative_dub, menu_groups, representatives
 from ...domain.episodes import EPISODES_PAGE, EpisodeUnion, dub_group, episode_ranges, resume_target
 from ...domain.franchise import is_movie
-from ...domain.library import STATUSES
+from ...domain.library import STATUSES, status_name
 from ...domain.quality import quality_name
 from ...domain.shikimori import HIDDEN_KINDS
 from ...domain.titles import release_title
@@ -21,7 +21,8 @@ from ..theme import ACCENT, STAR, TEXT
 from ..widgets.cards import CardRow
 from ..widgets.episode_tiles import EpisodeTile, SeasonCard, UpcomingTile
 from ..widgets.layout import ExpandingLabel, FlowLayout, Page, clear_layout, icon_label, label, scroll_page_widget
-from ..widgets.states import LOADING, error_text
+from ..widgets.states import error_text, loading
+from ...core.i18n import t
 
 RENDER_BATCH_MS = 40   # ответы нескольких источников подряд — одна перерисовка серий
 
@@ -41,7 +42,7 @@ class DetailsPage(Page):
         self.scope = RequestScope()
         self.area, lay = scroll_page_widget(self)
 
-        back = QPushButton("  Назад")
+        back = QPushButton("  " + t("common.back"))
         back.setIcon(icon("arrow-left", TEXT, 15))
         back.setObjectName("Flat")
         back.clicked.connect(self.back.emit)
@@ -93,14 +94,14 @@ class DetailsPage(Page):
         ub = QVBoxLayout(self.upcoming_box)
         ub.setContentsMargins(0, 8, 0, 0)
         ub.setSpacing(10)
-        self.upcoming_title = label("Предстоящие серии", "H2")
+        self.upcoming_title = label(t("anime.upcoming"), "H2")
         ub.addWidget(self.upcoming_title)
         up_host = QWidget()
         self.upcoming = FlowLayout(up_host, spacing=10)
         ub.addWidget(up_host)
         lay.addWidget(self.upcoming_box)
         self.upcoming_box.hide()
-        self.similar_row = CardRow(ctx, "Похожее")   # подборка Shikimori
+        self.similar_row = CardRow(ctx, t("anime.similar"))   # подборка Shikimori
         self.similar_row.hide()
         lay.addWidget(self.similar_row)
         lay.addSpacing(8)
@@ -119,7 +120,7 @@ class DetailsPage(Page):
     def _build_actions(self):
         actions = QHBoxLayout()
         actions.setSpacing(10)
-        self.play_btn = QPushButton("Смотреть")
+        self.play_btn = QPushButton(t("anime.watch"))
         self.play_btn.setIcon(icon("play", "white", 16))
         self.play_btn.setIconSize(QSize(16, 16))
         self.play_btn.setObjectName("Primary")
@@ -131,7 +132,7 @@ class DetailsPage(Page):
         self.status_menu = QMenu(self.status_btn)
         self.status_btn.setMenu(self.status_menu)
         actions.addWidget(self.status_btn)
-        self.fav_btn = QPushButton("В избранное")
+        self.fav_btn = QPushButton(t("library.add_favorite"))
         self.fav_btn.setIcon(toggle_icon(("heart", TEXT, True), ("heart", ACCENT, False), 16))
         self.fav_btn.setObjectName("Fav")
         self.fav_btn.setCheckable(True)
@@ -144,7 +145,7 @@ class DetailsPage(Page):
         for s in range(10, 0, -1):
             score_menu.addAction(icon("star", STAR, 14), str(s), lambda s=s: self._set_score(s))
         score_menu.addSeparator()
-        score_menu.addAction("Убрать оценку", lambda: self._set_score(None))
+        score_menu.addAction(t("anime.remove_score"), lambda: self._set_score(None))
         self.score_btn.setMenu(score_menu)
         actions.addWidget(self.score_btn)
         actions.addStretch(1)
@@ -155,7 +156,7 @@ class DetailsPage(Page):
         sb = QVBoxLayout(box)
         sb.setContentsMargins(0, 0, 0, 0)
         sb.setSpacing(8)
-        sb.addWidget(label("Сезоны и фильмы", "H2"))
+        sb.addWidget(label(t("anime.seasons"), "H2"))
         self.seasons_scroll = QScrollArea()
         self.seasons_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.seasons_scroll.setWidgetResizable(True)
@@ -173,19 +174,19 @@ class DetailsPage(Page):
     def _build_episode_header(self):
         ep_head = QHBoxLayout()
         ep_head.setSpacing(12)
-        self.ep_title = label("Серии", "H2")
+        self.ep_title = label(t("anime.episodes"), "H2")
         ep_head.addWidget(self.ep_title)
-        self.dub_btn = QPushButton("  Озвучка: ищем…")
+        self.dub_btn = QPushButton("  " + t("dubs.searching"))
         self.dub_btn.setIcon(icon("microphone", TEXT, 14))
         self.dub_btn.setObjectName("DubButton")
-        self.dub_btn.setToolTip("Выбрать озвучку или субтитры")
+        self.dub_btn.setToolTip(t("dubs.choose"))
         self.dub_menu = QMenu(self.dub_btn)
         self.dub_btn.setMenu(self.dub_menu)
         ep_head.addWidget(self.dub_btn)
         self.dub_note = label("", "Muted")
         ep_head.addWidget(self.dub_note)
         ep_head.addStretch(1)
-        self.mark_all = QPushButton("Отметить всё просмотренным")
+        self.mark_all = QPushButton(t("anime.mark_all"))
         self.mark_all.setObjectName("Flat")
         self.mark_all.setIcon(icon("check", TEXT, 14))
         self.mark_all.clicked.connect(self._mark_all)
@@ -201,7 +202,7 @@ class DetailsPage(Page):
             self.render(cached)
         else:
             self.release = None
-            self.title.setText(LOADING)
+            self.title.setText(loading())
             self.title_en.setText("")
             self.description.setText("")
             self.poster.clear()
@@ -215,7 +216,7 @@ class DetailsPage(Page):
 
         def fail(err):
             if not cached:
-                self.title.setText("Не удалось загрузить")
+                self.title.setText(t("errors.load_failed"))
                 self.description.setText(error_text(err))
 
         self.ctx.releases.load(release_id, ok, fail, scope=self.scope)
@@ -261,8 +262,7 @@ class DetailsPage(Page):
             if release_id:
                 self.ctx.open_anime.emit(release_id)
             else:
-                QMessageBox.information(self, "Сезоны и фильмы",
-                                        f"«{entry['name']}» пока нет ни в одном источнике.")
+                QMessageBox.information(self, t("anime.seasons"), t("anime.not_in_sources", name=entry["name"]))
         if entry.get("release"):
             self.ctx.releases.remember(entry["release"])
         self.ctx.franchise.resolve(entry, ok)
@@ -312,14 +312,14 @@ class DetailsPage(Page):
     def _render_meta(self, rel):
         clear_layout(self.meta)
         rows = [
-            ("Тип", (rel.get("type") or {}).get("description")),
-            ("Год", rel.get("year")),
-            ("Сезон", (rel.get("season") or {}).get("description")),
-            ("Эпизоды", rel.get("episodes_total")),
-            ("Длительность", fmt_duration((rel.get("average_duration_of_episode") or 0) * 60)),
-            ("Возраст", (rel.get("age_rating") or {}).get("label")),
-            ("Статус", "Выходит" if rel.get("is_ongoing") else "Завершён"),
-            ("Выход серий", (rel.get("publish_day") or {}).get("description") if rel.get("is_ongoing") else None),
+            (t("anime.info.type"), (rel.get("type") or {}).get("description")),
+            (t("anime.info.year"), rel.get("year")),
+            (t("anime.info.season"), (rel.get("season") or {}).get("description")),
+            (t("anime.info.episodes"), rel.get("episodes_total")),
+            (t("anime.info.duration"), fmt_duration((rel.get("average_duration_of_episode") or 0) * 60)),
+            (t("anime.info.age"), (rel.get("age_rating") or {}).get("label")),
+            (t("anime.info.status"), t("anime.info.ongoing") if rel.get("is_ongoing") else t("anime.info.finished")),
+            (t("anime.info.airs"), (rel.get("publish_day") or {}).get("description") if rel.get("is_ongoing") else None),
         ]
         i = 0
         for k, v in rows:
@@ -331,26 +331,26 @@ class DetailsPage(Page):
     def _render_library(self):
         entry = self.ctx.library.entry(self.release["id"])
         status = entry.get("status")
-        self.status_btn.setText(("  " + STATUSES[status]) if status else "  В список")
+        self.status_btn.setText("  " + (status_name(status) if status else t("anime.add_to_list")))
         self.status_btn.setIcon(icon("check", "#3fbf6a", 14) if status else icon("plus", TEXT, 14))
         self.status_menu.clear()
-        for key, name in STATUSES.items():
-            act = self.status_menu.addAction(name, lambda k=key: self._set_status(k))
+        for key in STATUSES:
+            act = self.status_menu.addAction(status_name(key), lambda k=key: self._set_status(k))
             act.setCheckable(True)
             act.setChecked(key == status)
         if status:
             self.status_menu.addSeparator()
-            self.status_menu.addAction("Убрать из списков", lambda: self._set_status(None))
+            self.status_menu.addAction(t("anime.remove_from_list"), lambda: self._set_status(None))
         self.fav_btn.setChecked(bool(entry.get("favorite")))
-        self.fav_btn.setText("  В избранном" if entry.get("favorite") else "  В избранное")
-        self.score_btn.setText(f"  {entry['score']}" if entry.get("score") else "  Оценить")
+        self.fav_btn.setText("  " + t("library.in_favorites" if entry.get("favorite") else "library.add_favorite"))
+        self.score_btn.setText(f"  {entry['score']}" if entry.get("score") else "  " + t("anime.rate"))
         self.score_btn.setIcon(icon("star", STAR, 15) if entry.get("score") else icon("star", TEXT, 15, regular=True))
 
     # ------------------------------------------------------------ озвучки
     def _load_dubs(self):
         rel = self.release
         if not self.dubs:
-            self.dub_btn.setText("  Озвучка: ищем…")
+            self.dub_btn.setText("  " + t("dubs.searching"))
             self.dub_note.setText("")
 
         def got(dubs, finished):
@@ -366,7 +366,7 @@ class DetailsPage(Page):
             if finished:
                 self._load_union()
             if finished and not dubs:
-                self.dub_btn.setText("  Озвучки не найдены")
+                self.dub_btn.setText("  " + t("dubs.none"))
                 self._render_episodes()
 
         self.ctx.sources.find_dubs(rel, got)
@@ -382,7 +382,7 @@ class DetailsPage(Page):
                 act.setChecked(bool(self.dub and d["id"] == self.dub["id"]))
             self.dub_menu.addSeparator()
         if not self.dubs_finished:
-            self.dub_menu.addAction("Ищем ещё озвучки…").setEnabled(False)
+            self.dub_menu.addAction(t("dubs.searching_more")).setEnabled(False)
 
     def _select_dub(self, dub, user=False):
         rel = self.release
@@ -392,7 +392,7 @@ class DetailsPage(Page):
             self.ctx.sources.remember_choice(rel, dub)
         self.dub_btn.setText(f"  {dub['name']}")
         self.dub_btn.setMinimumWidth(self.dub_btn.fontMetrics().horizontalAdvance(dub["name"]) + 90)
-        self.dub_note.setText("встроенный плеер" if dub["native"] else "веб-плеер Kodik")
+        self.dub_note.setText(t("dubs.note_builtin") if dub["native"] else t("dubs.note_kodik"))
         self._fill_dub_menu()
 
         def ok(eps):
@@ -401,7 +401,7 @@ class DetailsPage(Page):
                 heights = [int(q) for e in eps for q, url in (e.get("streams") or {}).items() if url]
                 if heights:
                     top = max(heights)
-                    self.dub_note.setText(f"встроенный плеер · до {top}p ({quality_name(top)})")
+                    self.dub_note.setText(t("dubs.note_quality", q=top, name=quality_name(top)))
                 self._render_episodes()
                 self._render_upcoming()
 
@@ -471,11 +471,11 @@ class DetailsPage(Page):
         for it in items:
             self.upcoming.addWidget(UpcomingTile(it))
         waiting = sum(1 for it in items if it["state"] in ("no_dub", "dub"))
-        title = "Предстоящие серии"
+        title = t("anime.upcoming")
         if info and info.get("episodes"):
-            title += f"  ·  всего серий: {info['episodes']}"
+            title += "  ·  " + t("anime.total_episodes", n=info["episodes"])
         if waiting:
-            title += f"  ·  ждут озвучки: {waiting}"
+            title += "  ·  " + t("anime.waiting_dub", n=waiting)
         self.upcoming_title.setText(title)
         self.upcoming_box.setVisible(bool(items))
 
@@ -491,11 +491,12 @@ class DetailsPage(Page):
         own = {e["key"] for e in eps}
         shown = self.union.shown(eps)
         movie = is_movie(rel) and len(shown) == 1
-        self.ep_title.setText(("Фильм" if movie else f"Серии  {len(shown)}") if shown else "Серии")
+        self.ep_title.setText((t("anime.kinds.movie") if movie else f"{t('anime.episodes')}  {len(shown)}") if shown
+                              else t("anime.episodes"))
         self.mark_all.setVisible(bool(eps))
         notice = ""
         if self.dubs_finished and not self.dubs:
-            notice = "Серии не найдены ни в одном источнике. Добавьте в «Хочу посмотреть», чтобы не потерять."
+            notice = t("anime.no_episodes_notice")
         self.notice.setText(notice)
         self.notice.setVisible(bool(notice))
         names = {dub_group(d): d["name"] for d in self.dubs if d["native"]}
@@ -524,9 +525,9 @@ class DetailsPage(Page):
         for ep in shown:
             note = None
             if ep["key"] not in own:
-                note = "есть в: " + ", ".join(sorted(names.get(g, g) for g in self.union.groups(ep["key"])))
+                note = t("anime.available_in", names=", ".join(sorted(names.get(g, g) for g in self.union.groups(ep["key"]))))
             tile = EpisodeTile(ep, progress.get(ep["key"]), current=bool(last and last["episode_id"] == ep["key"]),
-                               title="Смотреть фильм" if movie else None, missing_note=note, images=self.ctx.images,
+                               title=t("anime.watch_movie") if movie else None, missing_note=note, images=self.ctx.images,
                                preview=ep.get("preview") or self.union.preview(ep["key"]), poster=poster)
             tile.clicked.connect(self._play_any)
             tile.menu_requested.connect(self._episode_menu)
@@ -538,13 +539,13 @@ class DetailsPage(Page):
         if eps:
             ep = eps[resume_idx]
             if last:
-                self.play_btn.setText(f"  Продолжить: {fmt_ordinal(ep['ordinal'])} серия")
+                self.play_btn.setText("  " + t("anime.continue_n", n=fmt_ordinal(ep["ordinal"])))
             elif len(eps) > 1:
-                self.play_btn.setText(f"  Смотреть с {fmt_ordinal(ep['ordinal'])} серии")
+                self.play_btn.setText("  " + t("anime.watch_from_n", n=fmt_ordinal(ep["ordinal"])))
             else:
-                self.play_btn.setText("  Смотреть")
+                self.play_btn.setText("  " + t("anime.watch"))
         else:
-            self.play_btn.setText("  Смотреть")
+            self.play_btn.setText("  " + t("anime.watch"))
 
     # ------------------------------------------------------------ действия
     def _play(self, key):
@@ -566,16 +567,16 @@ class DetailsPage(Page):
         prog = self.ctx.progress.for_anime(rid).get(ep["key"])
         watched = bool(prog and prog["watched"])
         menu = QMenu(self)
-        menu.addAction(icon("play", TEXT, 14), "Смотреть", lambda: self._play(ep["key"]))
-        menu.addAction("Смотреть с начала", lambda: (self.ctx.progress.restart(rid, ep), self._play(ep["key"])))
+        menu.addAction(icon("play", TEXT, 14), t("anime.watch"), lambda: self._play(ep["key"]))
+        menu.addAction(t("anime.watch_from_start"), lambda: (self.ctx.progress.restart(rid, ep), self._play(ep["key"])))
         menu.addSeparator()
         if watched:
-            menu.addAction("Снять отметку «просмотрено»", lambda: self._mark([ep], False))
+            menu.addAction(t("anime.unmark_watched"), lambda: self._mark([ep], False))
         else:
-            menu.addAction("Отметить просмотренной", lambda: self._mark([ep], True))
+            menu.addAction(t("anime.mark_watched"), lambda: self._mark([ep], True))
         eps = self.dub_eps
         idx = next((i for i, e in enumerate(eps) if e["key"] == ep["key"]), 0)
-        menu.addAction("Отметить все до этой включительно", lambda: self._mark(eps[: idx + 1], True))
+        menu.addAction(t("anime.mark_up_to"), lambda: self._mark(eps[: idx + 1], True))
         menu.exec(pos)
 
     def _mark(self, eps, watched):

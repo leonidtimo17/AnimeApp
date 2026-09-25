@@ -19,11 +19,27 @@ import re
 from collections import Counter, defaultdict
 from typing import Callable
 
+from ..core.i18n import service, t
+from ..core.logging import get_logger
 from .titles import norm, release_title
 
+log = get_logger("taste")
+
 STATUS_WEIGHT = {"completed": 2.0, "watching": 1.5, "planned": 0.6, "postponed": 0.3, "dropped": -2.0}
-AI_SYSTEM = ("Ты помощник в приложении для просмотра аниме. Отвечай только валидным JSON на русском языке, "
-             "без рассуждений, пояснений и markdown.")
+# Язык ответа ИИ — язык интерфейса. Саха модели пока не знают — разбор по-русски.
+AI_LANGS = {"ru": "на русском языке", "sah": "на русском языке", "en": "на английском языке (in English)"}
+
+
+def ai_lang(lang: str | None = None) -> str:
+    return lang if (lang or "") in AI_LANGS else ("en" if service().locale == "en" else "ru")
+
+
+def ai_system(lang: str | None = None) -> str:
+    return (f"Ты помощник в приложении для просмотра аниме. Отвечай только валидным JSON {AI_LANGS[ai_lang(lang)]}, "
+            "без рассуждений, пояснений и markdown.")
+
+
+AI_SYSTEM = ai_system("ru")
 
 
 def genres_of(release) -> list[str]:
@@ -73,17 +89,17 @@ class TasteProfile:
         g = list(self.genres)
         parts = []
         if len(g) >= 2:
-            parts.append(f"Вам больше всего заходят {g[0].lower()} и {g[1].lower()}"
-                         + (f", часто — {g[2].lower()}" if len(g) > 2 else "") + ".")
+            parts.append(t("recs.taste_top3", a=g[0].lower(), b=g[1].lower(), c=g[2].lower()) if len(g) > 2
+                         else t("recs.taste_top2", a=g[0].lower(), b=g[1].lower()))
         if self.year_mean:
             decade = int(self.year_mean) // 10 * 10
-            parts.append(f"Предпочитаете аниме {decade}-х годов." if self.year_spread < 8
-                         else f"Смотрите аниме разных лет, в среднем около {int(self.year_mean)} года.")
+            parts.append(t("recs.taste_decade", decade=decade) if self.year_spread < 8
+                         else t("recs.taste_years", year=int(self.year_mean)))
         if self.types:
-            t, v = next(iter(self.types.items()))
-            parts.append(f"Формат: чаще {t.lower()} ({v:.0%}).")
+            kind, v = next(iter(self.types.items()))
+            parts.append(t("recs.taste_format", kind=kind.lower(), share=f"{v:.0%}"))
         if self.status_counts.get("dropped"):
-            parts.append(f"Брошено: {self.status_counts['dropped']} — такие жанры рекомендуем реже.")
+            parts.append(t("recs.taste_dropped", n=self.status_counts["dropped"]))
         return " ".join(parts)
 
 
@@ -171,10 +187,10 @@ def score(profile: TasteProfile, releases: list[dict]) -> list[tuple[float, dict
         similar = max(liked_sets, key=lambda x: len(x[1] & set(gs)), default=(None, set()))
         reason = ""
         if common:
-            reason = "жанры: " + ", ".join(common)
+            reason = t("recs.reason_genres", genres=", ".join(common))
         if similar[0] and len(similar[1] & set(gs)) >= 2:
-            reason += f" · похоже на «{release_title(similar[0])}»"
-        out.append((total, rel, reason or "популярное"))
+            reason += " · " + t("recs.reason_similar", title=release_title(similar[0]))
+        out.append((total, rel, reason or t("recs.reason_popular")))
     out.sort(key=lambda x: -x[0])
     return out
 
@@ -217,15 +233,15 @@ def extract_json(text):
     return None
 
 
-def ai_prompt(profile: TasteProfile, pool: list[dict]) -> str:
+def ai_prompt(profile: TasteProfile, pool: list[dict], lang: str | None = None) -> str:
     liked = [f"{release_title(r)} ({r.get('year') or '?'}; {', '.join(genres_of(r)[:4])})"
              for r in profile.liked[:15]]
     cand = [f"{i + 1}. {release_title(r)} ({r.get('year') or '?'}; {', '.join(genres_of(r)[:4])})"
             for i, r in enumerate(pool)]
     return (
         "Ты эксперт по аниме. По данным пользователя сделай короткий разбор его вкуса (4–6 предложений, "
-        "по-русски, дружелюбно, без воды) и выбери из СПИСКА КАНДИДАТОВ 8 аниме, которые ему понравятся, "
-        "с короткой причиной для каждого (до 12 слов).\n\n"
+        f"{AI_LANGS[ai_lang(lang)]}, дружелюбно, без воды) и выбери из СПИСКА КАНДИДАТОВ 8 аниме, которые ему понравятся, "
+        f"с короткой причиной для каждого (до 12 слов, {AI_LANGS[ai_lang(lang)]}).\n\n"
         f"Профиль: {profile.summary()}\n"
         f"Понравилось: {'; '.join(liked) or 'пока мало данных'}\n\n"
         "СПИСОК КАНДИДАТОВ:\n" + "\n".join(cand) + "\n\n"
@@ -233,11 +249,13 @@ def ai_prompt(profile: TasteProfile, pool: list[dict]) -> str:
     )
 
 
-def parse_ai_answer(text: str, pool: list[dict], title_of: Callable[[dict], str] = release_title):
-    """(analysis, [(релиз, причина)]) или строка-ошибка, если ответ не годится."""
+def parse_ai_answer(text: str, pool: list[dict], title_of: Callable[[dict], str] = release_title,
+                    lang: str | None = None):
+    """(analysis, [(релиз, причина)]) или строка-ошибка, если ответ не годится (сам ответ — в журнал)."""
     data = extract_json(text)
     if data is None:
-        return f"ИИ ответил не по формату.\n({(text or '').strip()[:160]})"
+        log.info("ИИ: ответ не JSON: %s", (text or "").strip()[:300])
+        return t("recs.ai_errors.format")
     analysis = data.get("analysis") or data.get("разбор") or data.get("анализ") or ""
     if not isinstance(analysis, str):
         analysis = json.dumps(analysis, ensure_ascii=False)
@@ -259,8 +277,9 @@ def parse_ai_answer(text: str, pool: list[dict], title_of: Callable[[dict], str]
             n = next((i for i, r in enumerate(pool) if title and norm(title_of(r)) == title), -1)
         if 0 <= n < len(pool) and pool[n] not in [x for x, _ in picks]:
             picks.append((pool[n], p.get("reason") or p.get("причина") or ""))
-    # Иногда модель вместо ответа выдаёт свои рассуждения (по-английски) — считаем это браком.
+    # Иногда модель вместо ответа выдаёт свои рассуждения (по-английски) — для русского разбора это брак.
     cyr = sum(1 for ch in analysis if "а" <= ch.lower() <= "я")
-    if not picks or cyr < len(analysis) * 0.3:
-        return f"ИИ ответил непонятно.\n({(text or '').strip()[:160]})"
+    if not picks or (ai_lang(lang) != "en" and cyr < len(analysis) * 0.3):
+        log.info("ИИ: непонятный ответ: %s", (text or "").strip()[:300])
+        return t("recs.ai_errors.unclear")
     return analysis.strip(), picks

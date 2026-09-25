@@ -14,6 +14,7 @@ from typing import Callable
 from ..core.cache import TTLCache
 from ..core.config import ANILIBRIA_MEDIA, MemoryTTL
 from ..core.errors import AppError
+from ..core.i18n import t
 from ..core.logging import get_logger
 from ..domain.dubs import ANILIBRIA, ANIMEVOST, choose_dub, sort_dubs
 from ..domain.episodes import anilibria_episodes
@@ -169,7 +170,7 @@ class SourceResolver:
         elif dub["id"].startswith("yani:"):
             store([dict(e) for e in ((matches.get("yani") or {}).get(dub["id"]) or {}).get("eps", [])])
         elif on_err:
-            on_err(AppError("Источник недоступен"))
+            on_err(AppError(t("player.source_unavailable")))
 
     def previews(self, release: dict, dubs: list[dict], cb) -> None:
         """Кадры серий со всех «родных» источников: {ключ серии: url} (у Kodik картинок нет)."""

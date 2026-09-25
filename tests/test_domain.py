@@ -241,3 +241,24 @@ def test_sleep_timer():
     t.from_job(5_000_000, 15, False)
     assert t.until == 5000 and job["episode"] is False
     assert len(changes) >= 4
+
+
+# ---------------------------------------------------------------- Kodik
+def test_kodik_url_normalized():
+    from urllib.parse import parse_qs, urlsplit
+    from anime_app.domain.kodik import kodik_url
+    u = urlsplit(kodik_url("//kodikplayer.com/seria/1/abc/720p", 600.7))
+    q = parse_qs(u.query)
+    assert u.scheme == "https" and q["translations"] == ["false"] and q["start_from"] == ["600"]
+    assert "start_from" not in kodik_url("https://kodikplayer.com/seria/1/abc/720p", 3)
+    season = parse_qs(urlsplit(kodik_url("//kodikplayer.com/season/9/x/720p?episode=2&start_from=50")).query)
+    assert season["only_episode"] == ["true"] and season["episode"] == ["2"] and "start_from" not in season
+
+
+def test_pick_kodik_player():
+    from anime_app.domain.kodik import pick_kodik_player
+    players = [{"player": "Kodik", "src": "//a", "team": {"id": 1, "name": "A"}},
+               {"player": "Kodik", "src": "//b", "team": {"id": 2, "name": "B"}}, {"player": "Other", "src": "//c"}]
+    assert pick_kodik_player(players, "2") == {"src": "//b", "team": "B", "fallback": False}
+    assert pick_kodik_player(players, 9) == {"src": "//a", "team": "A", "fallback": True}
+    assert pick_kodik_player([{"player": "Other", "src": "//c"}], 1) is None

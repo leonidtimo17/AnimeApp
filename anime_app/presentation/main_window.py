@@ -1,11 +1,12 @@
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QStackedWidget,
+    QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME, APP_VERSION
+from ..core.i18n import service as i18n, t
 from .icons import pixmap, toggle_icon
 from .pages.catalog import CatalogPage
 from .pages.details import DetailsPage
@@ -22,6 +23,8 @@ from .widgets.shiki_button import ShikimoriButton
 
 
 class MainWindow(QMainWindow):
+    language_selected = Signal(str)   # код языка; окно пересобирает app.py
+
     def __init__(self, ctx):
         super().__init__()
         self.ctx = ctx
@@ -85,13 +88,10 @@ class MainWindow(QMainWindow):
         self.nav = QButtonGroup(self)
         self.nav.setExclusive(True)
         self.nav_buttons = {}
-        for key, glyph, text in (("home", "house", "Главная"), ("recs", "wand-magic-sparkles", "Для вас"),
-                                 ("catalog", "table-cells-large", "Каталог"),
-                                 ("search", "magnifying-glass", "Поиск"),
-                                 ("schedule", "calendar-days", "Расписание"),
-                                 ("library", "bookmark", "Библиотека"),
-                                 ("history", "clock-rotate-left", "История")):
-            btn = QPushButton("  " + text)
+        for key, glyph in (("home", "house"), ("recs", "wand-magic-sparkles"), ("catalog", "table-cells-large"),
+                           ("search", "magnifying-glass"), ("schedule", "calendar-days"), ("library", "bookmark"),
+                           ("history", "clock-rotate-left")):
+            btn = QPushButton("  " + t(f"navigation.{key}"))
             btn.setIcon(toggle_icon((glyph, MUTED, False), (glyph, ACCENT, False), 18))
             btn.setIconSize(QSize(18, 18))
             btn.setObjectName("NavButton")
@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
             self.nav_buttons[key] = btn
             side.addWidget(btn)
         side.addStretch(1)
+        side.addWidget(self._language_button())
         # Вход через Shikimori — отдельной кнопкой внизу меню
         side.addWidget(ShikimoriButton(ctx))
         side.addSpacing(8)
@@ -127,6 +128,31 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Alt+Left"), self, self.go_back)
 
         self.show_page("home")
+
+    def _language_button(self):
+        """«Язык»: русский, саха, английский. Выбор сохраняется, окно перестраивается без перезапуска."""
+        svc = i18n()
+        current = next((x["name"] for x in svc.available if x["code"] == svc.locale), svc.locale)
+        btn = QPushButton(f"  {t('settings.language')}: {current}")
+        btn.setIcon(toggle_icon(("language", MUTED, False), ("language", ACCENT, False), 18))
+        btn.setIconSize(QSize(18, 18))
+        btn.setObjectName("NavButton")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        menu = QMenu(btn)
+        for lang in svc.available:
+            act = menu.addAction(lang["name"])
+            act.setCheckable(True)
+            act.setChecked(lang["code"] == svc.locale)
+            act.triggered.connect(lambda _=False, c=lang["code"]: self.language_selected.emit(c))
+        if svc.locale == "sah":
+            menu.addSeparator()
+            menu.addAction(t("settings.language_partial")).setEnabled(False)
+        btn.clicked.connect(lambda: menu.exec(btn.mapToGlobal(QPoint(0, -menu.sizeHint().height()))))   # над кнопкой
+        return btn
+
+    def current_state(self):
+        """Что открыто — чтобы новое окно (после смены языка) открылось там же."""
+        return self._current_key()
 
     # ------------------------------------------------------------ navigation
     def _in_player(self):
@@ -203,7 +229,7 @@ class MainWindow(QMainWindow):
         if key and not any(e["key"] == key for e in eps):
             key = None
         if not eps:
-            QMessageBox.information(self, APP_NAME, "В этой озвучке пока нет серий.")
+            QMessageBox.information(self, APP_NAME, t("player.no_episodes_in_dub"))
             return
         self.ctx.library.mark_watching(release["id"])
         if not self._in_player():
@@ -253,7 +279,7 @@ class MainWindow(QMainWindow):
             if release_id:
                 self.play(release_id, "")
             else:
-                QMessageBox.information(self, APP_NAME, f"«{entry['name']}» пока нет ни в одном источнике.")
+                QMessageBox.information(self, APP_NAME, t("anime.not_in_sources", name=entry["name"]))
         if entry.get("release"):
             self.ctx.releases.remember(entry["release"])
         self.ctx.franchise.resolve(entry, ok)

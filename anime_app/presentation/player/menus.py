@@ -4,6 +4,7 @@ from __future__ import annotations
 from ...domain.dubs import menu_groups
 from ...domain.sleep_timer import SleepTimer
 from ..theme import ACCENT
+from ...core.i18n import t
 
 
 def fill_dub_menu(menu, dubs, current_id, on_pick):
@@ -18,18 +19,18 @@ def fill_dub_menu(menu, dubs, current_id, on_pick):
             act.setChecked(d["id"] == current_id)
         menu.addSeparator()
     if not dubs:
-        menu.addAction("Ищем озвучки…").setEnabled(False)
+        menu.addAction(t("dubs.searching_short")).setEnabled(False)
 
 
 def fill_season_menu(menu, entries, on_pick):
     menu.clear()
     for e in entries:
-        text = f"{e['label']} · {e.get('year') or 'анонс'} — {e.get('name') or ''}"
+        text = f"{e['label']} · {e.get('year') or t('anime.announced').lower()} — {e.get('name') or ''}"
         act = menu.addAction(text, lambda e=e: on_pick(e))
         act.setCheckable(True)
         act.setChecked(bool(e.get("current")))
     if not entries:
-        menu.addAction("Других сезонов и фильмов нет").setEnabled(False)
+        menu.addAction(t("anime.no_other_seasons")).setEnabled(False)
 
 
 def fill_sleep_menu(menu, sleep: SleepTimer, on_change):
@@ -37,7 +38,7 @@ def fill_sleep_menu(menu, sleep: SleepTimer, on_change):
     menu.clear()
     left = sleep.minutes_left()
     if left:
-        menu.addSection(f"Осталось {left} мин")
+        menu.addSection(t("sleep.left", n=left))
     for text, minutes, episode, on in sleep.menu_items():
         act = menu.addAction(text, lambda m=minutes, e=episode: on_change(sleep.set(m, e)))
         act.setCheckable(True)

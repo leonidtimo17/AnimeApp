@@ -19,6 +19,7 @@ from ..theme import TEXT
 from .comments_panel import CommentsPanel
 from .menus import fill_dub_menu, fill_season_menu
 from .watch_ui import PAGE_QSS, EpisodeSide, WatchInfo, enter_fullscreen, exit_fullscreen
+from ...core.i18n import service as i18n, t
 
 log = get_logger("kodik")
 
@@ -48,7 +49,7 @@ class KodikPage(QWidget):
         self.bar.setStyleSheet("background:#0f0f12;")
         bl = QHBoxLayout(self.bar)
         bl.setContentsMargins(12, 6, 12, 6)
-        back = QPushButton("  Назад")
+        back = QPushButton("  " + t("common.back"))
         back.setObjectName("Flat")
         back.setIcon(icon("arrow-left", TEXT, 15))
         back.clicked.connect(self.close_player)
@@ -56,7 +57,7 @@ class KodikPage(QWidget):
         self.title = QLabel()
         self.title.setStyleSheet("font-weight:700;font-size:15px;")
         bl.addWidget(self.title, 1)
-        self.season_btn = QPushButton("  Сезоны и фильмы")
+        self.season_btn = QPushButton("  " + t("anime.seasons"))
         self.season_btn.setIcon(icon("layer-group", TEXT, 14))
         self.season_menu = QMenu(self)
         self.season_btn.setMenu(self.season_menu)
@@ -72,20 +73,20 @@ class KodikPage(QWidget):
         self.fs_btn.setObjectName("Flat")
         self.fs_btn.setIcon(icon("expand", TEXT, 16))
         self.fs_btn.setIconSize(QSize(16, 16))
-        self.fs_btn.setToolTip("Полный экран (F11)")
+        self.fs_btn.setToolTip(t("player.fullscreen_key", key="F11"))
         self.fs_btn.clicked.connect(self.toggle_fullscreen)
         self.cm_btn = QPushButton()
         self.cm_btn.setObjectName("Flat")
         self.cm_btn.setIcon(icon("comments", TEXT, 16))
         self.cm_btn.setIconSize(QSize(16, 16))
-        self.cm_btn.setToolTip("Обсуждение серии на Shikimori")
+        self.cm_btn.setToolTip(t("comments.tooltip"))
         self.cm_btn.clicked.connect(self.toggle_comments)
         bl.addWidget(self.cm_btn)
-        self.ad_btn = QPushButton("  Без рекламы")
+        self.ad_btn = QPushButton("  " + t("player.adblock"))
         self.ad_btn.setObjectName("Flat")
         self.ad_btn.setCheckable(True)
         self.ad_btn.setChecked(ctx.prefs.get("kodik_adblock", True))
-        self.ad_btn.setToolTip("Блокировать рекламу и счётчики в плеере Kodik (включится со следующей серии)")
+        self.ad_btn.setToolTip(t("player.adblock_tip"))
         self.ad_btn.toggled.connect(self._toggle_adblock)
         self._paint_ad_btn()
         bl.addWidget(self.ad_btn)
@@ -103,7 +104,7 @@ class KodikPage(QWidget):
         self.holder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.body = QVBoxLayout(self.holder)
         self.body.setContentsMargins(0, 0, 0, 0)
-        self.status = QLabel("Запускаем плеер…")
+        self.status = QLabel(t("player.starting"))
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setStyleSheet("color:#9a9aa6;font-size:15px;")
         self.body.addWidget(self.status, 1)
@@ -235,7 +236,7 @@ class KodikPage(QWidget):
         self.side.set_episodes(release, eps, 0, self.ctx.releases.poster_url(release))
         self._apply_mode()
         self.title.setText(release_title(release))
-        self.status.setText("Запускаем плеер…")
+        self.status.setText(t("player.starting"))
         self.status.show()
 
         idx, pos = self.ctx.progress.open_at(release["id"], eps, key)
@@ -253,7 +254,7 @@ class KodikPage(QWidget):
                 "index": idx, "position": pos,
                 "sid": (release.get("shikimori") or {}).get("id"),
                 "autoskip": self.ctx.prefs.get("autoskip_opening", False),
-                "adblock": self.ctx.prefs.get("kodik_adblock", True),
+                "adblock": self.ctx.prefs.get("kodik_adblock", True), "lang": i18n().locale,
                 "zoom_fill": self.ctx.prefs.get("zoom_fill", False),
                 "sleep": self.ctx.sleep.to_job(),
             }, f, ensure_ascii=False)
@@ -267,6 +268,8 @@ class KodikPage(QWidget):
             main_py = os.path.join(PROJECT_DIR, "main.py")
             proc.setArguments([main_py, "--webplayer", job_path])
         proc.readyReadStandardOutput.connect(lambda: self._output(proc))
+        proc.readyReadStandardError.connect(   # технические подробности плеера — в журнал, не на экран
+            lambda: log.info("%s", bytes(proc.readAllStandardError()).decode("utf-8", "replace").strip()))
         proc.finished.connect(lambda *_: self._finished(proc))
         proc.start()
 
@@ -297,7 +300,7 @@ class KodikPage(QWidget):
                 self._show_episode()
             elif kind == "error":
                 log.warning("Плеер Kodik: %s", msg.get("message"))
-                self.status.setText(msg.get("message", "Ошибка плеера"))
+                self.status.setText(t("player.errors.source"))
             elif kind == "setting" and msg.get("key") in ("zoom_fill",):
                 self.ctx.prefs.set(msg["key"], msg.get("value"))
             elif kind == "sleep":

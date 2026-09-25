@@ -8,10 +8,11 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QMenu, QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from ...domain.library import STATUSES
+from ...domain.library import STATUSES, status_name
 from ..icons import pixmap
 from ..theme import ACCENT
 from .layout import FlowLayout, clear_layout, elide_lines, label
+from ...core.i18n import t
 
 CARD_W, POSTER_H = 176, 250
 
@@ -100,7 +101,7 @@ class PosterCard(QFrame):
         if item.get("badge"):
             self.badges.addWidget(label(item["badge"], "Badge"))
         if item.get("status"):
-            self.badges.addWidget(label(STATUSES.get(item["status"], ""), "BadgeGreen"))
+            self.badges.addWidget(label(status_name(item["status"]), "BadgeGreen"))
         if item.get("favorite"):
             b = label("", "BadgeRed")
             b.setPixmap(pixmap("heart", "white", 11))
@@ -112,9 +113,9 @@ class PosterCard(QFrame):
         fav = bool(self.item.get("favorite"))
         planned = self.item.get("status") == "planned"
         self.fav_btn.setIcon(QIcon(pixmap("heart", "#ff4d6d" if fav else "white", 16, regular=not fav)))
-        self.fav_btn.setToolTip("Убрать из избранного" if fav else "В избранное")
+        self.fav_btn.setToolTip(t("library.remove_favorite" if fav else "library.add_favorite"))
         self.plan_btn.setIcon(QIcon(pixmap("bookmark", ACCENT if planned else "white", 16, regular=not planned)))
-        self.plan_btn.setToolTip("Убрать из «Хочу посмотреть»" if planned else "Хочу посмотреть")
+        self.plan_btn.setToolTip(t("library.remove_planned") if planned else t("status.planned"))
 
     def _ensure_cached(self):
         # Для списков нужна запись о тайтле в базе (чтобы библиотека работала офлайн).
@@ -155,19 +156,19 @@ class PosterCard(QFrame):
 
     def contextMenuEvent(self, e):
         menu = QMenu(self)
-        menu.addAction(pixmap_icon("circle-play"), "Открыть", lambda: self.ctx.open_anime.emit(self.item["id"]))
-        menu.addAction(pixmap_icon("play"), "Смотреть", lambda: self.ctx.play.emit(self.item["id"], ""))
+        menu.addAction(pixmap_icon("circle-play"), t("common.open"), lambda: self.ctx.open_anime.emit(self.item["id"]))
+        menu.addAction(pixmap_icon("play"), t("anime.watch"), lambda: self.ctx.play.emit(self.item["id"], ""))
         menu.addSeparator()
         fav = bool(self.item.get("favorite"))
         menu.addAction(pixmap_icon("heart", "#ff4d6d" if fav else "#f2f2f5", regular=not fav),
-                       "Убрать из избранного" if fav else "В избранное", self.toggle_favorite)
+                       t("library.remove_favorite" if fav else "library.add_favorite"), self.toggle_favorite)
         menu.addSeparator()
-        for key, name in STATUSES.items():
-            act = menu.addAction(name, lambda k=key: self.set_status(k))
+        for key in STATUSES:
+            act = menu.addAction(status_name(key), lambda k=key: self.set_status(k))
             act.setCheckable(True)
             act.setChecked(self.item.get("status") == key)
         if self.item.get("status"):
-            menu.addAction("Убрать из списков", lambda: self.set_status(None))
+            menu.addAction(t("anime.remove_from_list"), lambda: self.set_status(None))
         menu.exec(e.globalPos())
 
     def mouseReleaseEvent(self, e):
@@ -211,7 +212,7 @@ class CardGrid(QScrollArea):
         self.status.setWordWrap(True)
         outer.addWidget(self.status)
         # Кнопка на случай, если прокруткой пользоваться неудобно
-        self.more_btn = QPushButton("Показать ещё")
+        self.more_btn = QPushButton(t("common.show_more"))
         self.more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.more_btn.clicked.connect(self.need_more.emit)
         self.more_btn.hide()
@@ -246,10 +247,10 @@ class CardGrid(QScrollArea):
                 self.flow.addWidget(card)
         self.flow_host.updateGeometry()
 
-    def set_items(self, items, empty_text="Ничего не найдено"):
+    def set_items(self, items, empty_text=None):
         self.clear()
         self.add_items(items)
-        self.set_status("" if items else empty_text)
+        self.set_status("" if items else (empty_text or t("common.nothing_found")))
 
     def set_status(self, text):
         self.status.setText(text)
