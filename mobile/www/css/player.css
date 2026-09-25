@@ -1,0 +1,178 @@
+/* Плеер и страница просмотра как на YouTube: видео, панели управления, список серий, обсуждение, полный экран. */
+/* Плеер */
+#player { position: fixed; inset: 0; background: #000; z-index: var(--z-player); }
+#player video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* Плеер Kodik: видео на весь экран, наши панели поверх; во время рекламы — между панелями, чтобы её кнопки были доступны */
+#player iframe.kodik { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; transition: transform .2s; }
+#player.k-ad iframe.kodik { top: calc(56px + var(--safe-top)); bottom: calc(96px + var(--safe-bottom)); height: auto; transform: none; }
+#player.kp { overflow: hidden; }
+.kpanel { position: absolute; left: 0; right: 0; bottom: 0; height: calc(96px + var(--safe-bottom));
+  padding: 8px calc(16px + var(--safe-right)) calc(8px + var(--safe-bottom)) calc(16px + var(--safe-left));
+  background: linear-gradient(transparent, rgba(0,0,0,.88) 35%);
+  transition: opacity .25s; }
+.k-ad .kpanel, .k-ad .pl-top { background: #101014; }
+.kpill { bottom: calc(112px + var(--safe-bottom)); }
+.kad { color: #ffb070; font-size: 13px; font-weight: 600; margin-right: 8px; display: none; }
+.k-ad .kad { display: inline; }
+.k-ad .kpanel .ctl, .k-ad .kpanel .seek { opacity: .35; pointer-events: none; }
+.kskip { border: 1px solid rgba(255,255,255,.25) !important; }
+.pl-top, .pl-bottom { position: absolute; left: 0; right: 0; padding: 12px calc(16px + var(--safe-right)) 12px calc(16px + var(--safe-left));
+  transition: opacity .25s; }
+.pl-center { transition: opacity .25s; }
+.pl-top { top: 0; padding-top: calc(10px + var(--safe-top)); display: flex; align-items: center; gap: 12px;
+  background: linear-gradient(rgba(0,0,0,.8), transparent); }
+.pl-top.solid { background: #0f0f12; }
+.pl-top .ttl { flex: 1; min-width: 0; }
+.pl-top .ttl b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-top .ttl small { color: rgba(255,255,255,.7); }
+.pl-bottom { bottom: 0; padding-bottom: calc(10px + var(--safe-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.85)); }
+/* При просмотре прячем всё управление, кроме «Пропустить заставку» / «Следующая серия» */
+.pl-hidden .pl-top:not(.solid), .pl-hidden .pl-bottom, .pl-hidden .pl-center { opacity: 0; pointer-events: none; }
+/* Kodik: спрятанные панели невидимы, но ловят касание, чтобы снова показаться */
+.kp.pl-hidden .pl-top, .kp.pl-hidden .kpanel { opacity: 0; pointer-events: auto; }
+.pl-btn { background: none; border: 0; color: #fff; font-size: 20px; padding: 10px 12px; border-radius: 10px;
+  min-width: var(--tap); min-height: var(--tap); cursor: pointer; }
+.pl-btn:disabled { opacity: .35; cursor: default; }
+@media (hover: hover) { .pl-btn:hover:not(:disabled) { background: rgba(255,255,255,.12); } }
+.pl-btn.txt { font-size: 14px; font-weight: 700; }
+.pl-btn.on { color: var(--accent); }
+#player .pl-osd { white-space: pre-line; text-align: center; }
+.pl-row { display: flex; align-items: center; gap: 2px; }
+.pl-row .sp { flex: 1; }
+.pl-time { font-weight: 600; font-size: 14px; margin: 0 8px; }
+.seek { position: relative; height: 26px; touch-action: none; }
+.seek .tr { position: absolute; left: 0; right: 0; top: 11px; height: 5px; background: rgba(255,255,255,.25); border-radius: 3px; }
+.seek .buf { position: absolute; left: 0; top: 11px; height: 5px; background: rgba(255,255,255,.35); border-radius: 3px; }
+.seek .mk { position: absolute; top: 11px; height: 5px; background: rgba(255,210,120,.55); }
+.seek .pl { position: absolute; left: 0; top: 11px; height: 5px; background: var(--accent); border-radius: 3px; }
+.seek .kn { position: absolute; top: 6px; width: 15px; height: 15px; margin-left: -7px; border-radius: 8px; background: #fff; }
+.pl-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; gap: 60px; align-items: center; }
+.pl-center .pl-btn { font-size: 30px; background: rgba(0,0,0,.35); width: 70px; height: 70px; border-radius: 35px; }
+.pl-center .pl-btn.big { font-size: 38px; width: 88px; height: 88px; border-radius: 44px; }
+.pl-pill { position: absolute; right: 22px; bottom: calc(110px + var(--safe-bottom)); display: flex; gap: 10px; }
+.pl-pill button { border-radius: 12px; padding: 13px 20px; font-weight: 700; border: 1px solid rgba(255,255,255,.3);
+  background: rgba(20,20,24,.9); color: #fff; }
+.pl-pill button.acc { background: var(--accent); border-color: var(--accent); }
+.pl-osd { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); background: rgba(0,0,0,.7);
+  border-radius: 14px; padding: 12px 22px; font-weight: 700; font-size: 17px; text-align: center; }
+.pl-list { position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 90%); background: rgba(16,16,20,.97);
+  overflow-y: auto; padding: calc(12px + var(--safe-top)) 10px 12px; z-index: 5; }
+.pl-list .ttl { color: var(--muted); font-size: 13px; font-weight: 700; padding: 4px 6px 10px; }
+.pl-list .it { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px; }
+.pl-list .it.on { background: rgba(255,106,26,.22); }
+.pl-list .it .thumb { width: 132px; flex: none; border-radius: 7px; overflow: hidden; }
+.pl-list .it .thumb .big { font-size: 20px; }
+.pl-list .it .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pl-list .it .txt small { color: rgba(255,255,255,.65); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-list .it .ok { color: var(--green); font-size: 16px; }
+.kplist { top: calc(56px + var(--safe-top)); bottom: calc(96px + var(--safe-bottom)); padding-top: 12px; }
+
+
+/* Обсуждение серии в плеере */
+.pl-comments { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94%); background: rgba(16,16,20,.97); z-index: 6;
+  display: flex; flex-direction: column; padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom)); }
+.pl-comments[hidden] { display: none; }
+.pl-comments .ch { display: flex; align-items: center; gap: 8px; }
+.pl-comments .ch .sp { flex: 1; }
+.pl-comments .cl { flex: 1; overflow-y: auto; margin: 8px 0; -webkit-overflow-scrolling: touch; }
+.pl-comments .hint { font-size: 12px; }
+.cm { display: flex; gap: 10px; padding: 10px 2px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.cm img { width: 34px; height: 34px; border-radius: 50%; flex: none; object-fit: cover; background: #222; }
+.cm > div { min-width: 0; flex: 1; }
+.cmh { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.cmb { font-size: 14px; line-height: 1.45; margin-top: 3px; overflow-wrap: anywhere; }
+.cmb blockquote { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--border); color: var(--muted); }
+.cmb .spoiler { background: #444; color: transparent; border-radius: 4px; cursor: pointer; }
+.cmb .spoiler.open { background: rgba(255,255,255,.08); color: inherit; }
+.cmb .ts { color: var(--accent); font-weight: 700; cursor: pointer; }
+.cmore { display: block; margin: 12px auto; }
+.pl-comments textarea { width: 100%; min-height: 70px; resize: vertical; background: #1c1c22; color: #fff; border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px; font: inherit; box-sizing: border-box; }
+.cfr { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 13px; }
+.cfr .sp { flex: 1; }
+.creply { background: none; border: 0; color: var(--muted); font-size: 12px; padding: 0 4px; }
+.creply:active { color: var(--accent); }
+
+/* ===================== Страница просмотра как на YouTube ===================== */
+#player { display: flex; gap: 22px; background: var(--bg); overflow: hidden;
+  padding: calc(14px + var(--safe-top)) 22px 0; box-sizing: border-box; }
+#player .pv-main { flex: 1; min-width: 0; overflow-y: auto; padding-bottom: calc(24px + var(--safe-bottom)); }
+#player .pv-video { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(var(--vh-full) - 160px);
+  background: #000; border-radius: 14px; overflow: hidden; }
+#player .pv-side { width: min(380px, 34vw); flex: none; display: flex; flex-direction: column; min-height: 0;
+  padding-bottom: var(--safe-bottom); }
+.pv-title { font-size: 21px; line-height: 1.25; margin: 14px 0 4px; }
+.pv-sub { color: var(--muted); font-size: 14px; }
+.pv-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.pv-actions .chip .fa { margin-right: 4px; }
+.pv-actions .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pv-desc { background: var(--surface); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5; color: #d4d4dc;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; white-space: pre-line; }
+.pv-desc.open { -webkit-line-clamp: unset; display: block; }
+.pv-h { font-size: 18px; margin: 20px 0 6px; }
+.pv-chips { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.pv-chips .chip.on { background: #f2f2f5; color: #111; border-color: #f2f2f5; }
+/* список серий справа — те же строки с кадрами, что и в плеере, но на странице */
+#player .pv-list { position: static; width: auto; background: none; padding: 0; overflow-y: auto; flex: 1; min-height: 0; z-index: auto; }
+#player .pv-list .it { border-radius: 10px; }
+#player .pv-list .it .thumb { width: 150px; }
+/* на странице лишнее из видео прячем: название (оно ниже), список серий и обсуждение (они на странице) */
+#player:not(.fs) .pv-video .ttl,
+#player:not(.fs) .pv-video [data-a=list], #player:not(.fs) .pv-video [data-a=eps],
+#player:not(.fs) .pv-video [data-a=comments], #player:not(.fs) .pv-video [data-a=zoom] { display: none; }
+#player:not(.fs) .pv-video .pl-top { padding-top: 8px; }
+#player:not(.fs) .pv-video .pl-bottom, #player:not(.fs) .pv-video .kpanel { padding-bottom: 8px; }
+#player:not(.fs) .pv-video .kpanel { height: 96px; }
+#player:not(.fs) .pv-video .pl-list { top: 0; bottom: 0; }
+.pv-video.k-ad iframe.kodik { top: 56px; bottom: 96px; height: auto; transform: none; }
+/* обсуждение на странице — обычный блок под описанием, поле ввода сверху, как у YouTube */
+#player:not(.fs) .pl-comments { position: static; width: auto; background: none; padding: 0; z-index: auto; display: flex; }
+#player:not(.fs) .pl-comments[hidden] { display: none; }
+#player:not(.fs) .pl-comments .ch { order: -2; }
+#player:not(.fs) .pl-comments .cf { order: -1; margin: 6px 0 4px; }
+#player:not(.fs) .pl-comments .cl { overflow: visible; flex: none; }
+#player:not(.fs) .pl-comments [data-cx] { display: none; }
+/* полный экран: только видео */
+#player.fs { padding: 0; background: #000; }
+#player.fs .pv-main { overflow: visible; padding: 0; }
+#player.fs .pv-video { position: fixed; inset: 0; max-height: none; aspect-ratio: auto; border-radius: 0; z-index: 5; }
+#player.fs .pv-info, #player.fs .pv-side { display: none; }
+/* книжная ориентация и узкие экраны: всё в одну колонку, видео прилипает сверху */
+@media (orientation: portrait), (max-width: 900px) {
+  #player:not(.fs) { flex-direction: column; gap: 0; overflow-y: auto; padding: var(--safe-top) 0 0; }
+  /* порядок как в приложении YouTube: видео → название и кнопки → серии → обсуждение */
+  #player:not(.fs) .pv-main, #player:not(.fs) .pv-info { display: contents; }
+  #player:not(.fs) .pv-video { order: 1; flex: none; position: sticky; top: 0; z-index: 4; border-radius: 0; max-height: 45vh; }
+  #player:not(.fs) .pv-top { order: 2; padding: 0 16px; }
+  #player:not(.fs) .pv-side { order: 3; width: auto; flex: none; padding: 8px 16px 0; }
+  #player:not(.fs) .pv-h { order: 4; padding: 0 16px; }
+  #player:not(.fs) .pl-comments { order: 5; padding: 0 16px calc(24px + var(--safe-bottom)); }
+  #player:not(.fs) .pv-list { overflow: visible; flex: none; }
+}
+
+/* Состояние видео: загрузка, подгрузка, ошибка с кнопкой «Повторить» */
+.pl-overlay { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: var(--sp-3); pointer-events: none; }
+.pl-overlay .spinner { position: static; margin: 0; }
+.pl-ov-text { color: rgba(255,255,255,.8); font-size: var(--fs-m); text-shadow: var(--shadow-1); }
+.pl-error { pointer-events: auto; background: rgba(16,16,20,.92); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: var(--sp-4) var(--sp-5); max-width: min(420px, 90%); text-align: center; display: flex; flex-direction: column; gap: var(--sp-3); }
+.pl-error-actions { display: flex; gap: var(--sp-2); justify-content: center; flex-wrap: wrap; }
+/* Kodik: окно плеера под нашими панелями, на весь блок видео */
+#player .kodik { z-index: 0; }
+/* Невысокий экран в альбомной (телефон): панели компактнее, лишние подписи прячем */
+@media (orientation: landscape) and (max-height: 500px) {
+  .pl-btn { padding: 6px 8px; font-size: 18px; }
+  .pl-btn.txt { font-size: var(--fs-s); }
+  .pl-center { gap: 32px; }
+  .pl-center .pl-btn { width: 56px; height: 56px; font-size: 24px; }
+  .pl-center .pl-btn.big { width: 68px; height: 68px; font-size: 30px; }
+  .kpanel { height: calc(84px + var(--safe-bottom)); }
+  .kad, .kskip { display: none !important; }
+}
+/* Узкий экран (телефон в книжной): второстепенные кнопки видео прячем — они есть под видео и в меню */
+@media (max-width: 560px) {
+  .pl-row [data-a=speed], .pl-row [data-a=zoom], .pl-row [data-a=sleep], .pl-row [data-a=seasons] { display: none; }
+  .pl-time { font-size: var(--fs-s); margin: 0 4px; }
+}
+@media (prefers-reduced-motion: reduce) { #player, .pl-top, .pl-bottom, .kpanel, .lz { transition: none !important; } }

@@ -1,0 +1,32 @@
+/* Дизайн-токены: все цвета, отступы, радиусы, шрифты, тени и слои приложения.
+   Компоненты берут значения отсюда, а не задают свои. Те же цвета — в ПК-версии (anime_app/presentation/theme.py). */
+:root {
+  /* цвета */
+  --accent: #ff6a1a; --accent-2: #ff8340; --bg: #0f0f12; --surface: #18181d; --surface-2: #222229; --surface-3: #2c2c35;
+  --border: #2c2c35; --text: #f2f2f5; --text-2: #d0d0d8; --muted: #9a9aa6; --green: #3fbf6a; --green-bg: #2d7d46;
+  --red-bg: #c0304a; --fav: #ff4d6d; --star: #ffc83d; --warn: #ffb070;
+  --overlay: rgba(0, 0, 0, .55); --glass: rgba(16, 16, 20, .97); --skeleton: #1f1f26; --skeleton-hi: #2a2a33;
+
+  /* отступы (шкала 4 px) */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px;
+  /* радиусы */
+  --r-s: 6px; --r-m: 10px; --r-l: 12px; --r-xl: 14px; --r-pill: 16px; --r-round: 50%;
+  /* шрифт */
+  --font: "Segoe UI", Roboto, "HarmonyOS Sans", system-ui, sans-serif;
+  --fs-xs: 11px; --fs-s: 12px; --fs-sm: 13px; --fs-m: 14px; --fs-base: 15px; --fs-l: 17px;
+  --fs-h2: 19px; --fs-h1: 28px;
+  /* тени и слои */
+  --shadow-1: 0 1px 4px rgba(0, 0, 0, .6); --shadow-sheet: 0 -8px 30px rgba(0, 0, 0, .45);
+  --z-player: 40; --z-sheet: 50; --z-toast: 60; --z-legal: 60; --z-offline: 55;
+  /* движение */
+  --t-fast: .2s; --t-base: .25s;
+  /* безопасные зоны экрана */
+  --safe-top: env(safe-area-inset-top, 0px); --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px);   /* вырез iPhone в альбомной */
+  /* размер касания: пальцем — не меньше 44 px (рекомендация Apple/Google), мышью можно плотнее */
+  --tap: 40px;
+  /* высота видимой области: dvh учитывает панели браузера на телефоне; где его нет — vh */
+  --vh-full: 100vh;
+}
+@supports (height: 100dvh) { :root { --vh-full: 100dvh; } }
+@media (pointer: coarse) { :root { --tap: 44px; } }

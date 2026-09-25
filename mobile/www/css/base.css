@@ -1,0 +1,44 @@
+/* Основа: шрифты иконок, сброс, типографика, каркас приложения (экран + нижние вкладки). */
+@font-face { font-family: "FA"; src: url("../fonts/fa-solid-900.ttf"); font-weight: 900; }
+@font-face { font-family: "FAR"; src: url("../fonts/fa-regular-400.ttf"); font-weight: 400; }
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: var(--fs-base)/1.4 var(--font); overscroll-behavior: none; }
+button { font: inherit; color: inherit; }
+.fa { font-family: "FA"; font-weight: 900; font-style: normal; display: inline-block; line-height: 1; }
+.far { font-family: "FAR"; font-weight: 400; font-style: normal; display: inline-block; line-height: 1; }
+[hidden] { display: none !important; }
+
+h1 { font-size: var(--fs-h1); font-weight: 800; margin: var(--sp-1) 0 var(--sp-4); }
+h2 { font-size: var(--fs-h2); font-weight: 700; margin: 22px 0 10px; display: flex; align-items: center; gap: 10px; }
+.muted { color: var(--muted); }
+.accent { color: var(--accent); }
+.grow { flex: 1; min-width: 0; }
+.right { text-align: right; }
+.row-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.row-head .sp { flex: 1; }
+
+#app { display: flex; flex-direction: column; height: 100%; padding-left: var(--safe-left); padding-right: var(--safe-right); }
+#view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: calc(var(--safe-top) + 18px) clamp(12px, 3vw, 22px) var(--sp-6);
+  -webkit-overflow-scrolling: touch; }
+#tabs { display: flex; background: var(--surface); border-top: 1px solid var(--border); padding-bottom: var(--safe-bottom); }
+#tabs button { flex: 1; min-width: 0; min-height: var(--tap); background: none; border: 0; padding: 9px 0 var(--sp-2); color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); font-size: var(--fs-s); }
+#tabs button .fa { font-size: 19px; }
+#tabs button.on { color: var(--accent); }
+/* Вкладка Shikimori: аватар и ник (длинный ник обрезается) */
+#tabs button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--sp-1); }
+#tabs .tab-av { width: 21px; height: 21px; border-radius: var(--r-round); object-fit: cover; display: block; margin: 0 auto 1px; }
+
+/* Нет интернета — полоска сверху (по событию браузера/ОС и ошибкам запросов, без проверок скорости) */
+#offline { position: fixed; left: 0; right: 0; top: 0; z-index: var(--z-offline); background: var(--surface-2);
+  color: var(--warn); font-size: var(--fs-sm); font-weight: 600; text-align: center;
+  padding: calc(var(--safe-top) + 6px) var(--sp-3) 6px; border-bottom: 1px solid var(--border); }
+
+/* Клавиатура (планшет с клавиатурой, Mac): видимая рамка фокуса только при навигации с клавиатуры */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus:not(:focus-visible) { outline: none; }
+.small { font-size: var(--fs-sm); }
+/* Широкий экран (iPad в альбомной, Mac, ПК): вкладки — по центру, не растягиваются на всю ширину */
+@media (min-width: 1100px) { #tabs { justify-content: center; } #tabs button { flex: 0 1 140px; } }
