@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -85,6 +86,21 @@ def test_http_cache_ttl(db):
     assert c.stats() == (1, 4)
     c.clear()
     assert c.get("k", None) is None
+
+
+def test_http_cache_prune_keeps_size_in_check(db):
+    """Кэш ответов не растёт бесконечно: при переполнении уходят самые старые записи."""
+    c = HttpCacheRepository(db)
+    c.MAX_BYTES, c.TARGET_BYTES = 1000, 600
+    now = time.time()
+    for i in range(10):
+        c.put(f"k{i}", "x" * 200)
+        db.execute("UPDATE http_cache SET ts = ? WHERE url = ?", (now - (10 - i), f"k{i}"))
+    assert c.stats() == (10, 2000)
+    c.prune()
+    count, size = c.stats()
+    assert size <= 600 and count == 3
+    assert c.get("k9", None) == "x" * 200 and c.get("k0", None) is None   # свежее осталось, старое ушло
 
 
 def test_transaction_rolls_back(db):

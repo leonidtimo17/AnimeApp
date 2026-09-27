@@ -9,6 +9,7 @@ import sys
 
 from . import APP_NAME, APP_VERSION
 from .core import i18n
+from .core.config import USER_AGENT
 from .core.logging import get_logger, setup_logging
 
 log = get_logger("app")
@@ -37,6 +38,7 @@ def build_services(data_dir: str, cache_dir: str):
     from .infrastructure.images.loader import ImageLoader
     from .infrastructure.network.bandwidth import BandwidthProbe
     from .infrastructure.network.service import NetworkService
+    from .infrastructure.streaming.proxy import StreamProxy
 
     db = Database(os.path.join(data_dir, "library.db"))
     anime_repo, library_repo = AnimeRepository(db), LibraryRepository(db)
@@ -62,6 +64,7 @@ def build_services(data_dir: str, cache_dir: str):
         recommendations=RecommendationService(anilibria, releases, library, progress_repo, anime_repo, AiApi(http)),
         shiki=shiki, backup=BackupService(db, anime_repo, library_repo, progress_repo, http_cache, http, images),
         network=network, images=images, anilibria=anilibria, shikimori_api=shikimori_api, sleep=SleepTimer(),
+        streaming=StreamProxy(USER_AGENT),
     )
 
 

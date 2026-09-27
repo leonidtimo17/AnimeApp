@@ -201,11 +201,15 @@ export function nativePlayer(root, opts) {
     const startAt = pos > 3 ? pos : 0;
     const allHls = qualities().every((x) => ep().streams[x].split("?")[0].endsWith(".m3u8"));
     if (url.split("?")[0].endsWith(".m3u8") && globalThis.Hls?.isSupported()) {
-      // Запас не больше ~45 с: иначе новое качество видно только через пару минут.
+      // Запас ~60 с: на медленном канале (VPN — плюс 1,5–2 с на каждый запрос) меньший запас
+      // кончается раньше, чем приходит следующий кусок, и видео замирает.
       // backBufferLength: просмотренное держим не дольше 30 с — иначе к концу серии сотни мегабайт в памяти.
-      hls = new Hls({ maxBufferLength: 40, maxMaxBufferLength: 45, backBufferLength: 30, maxBufferSize: 40 * 1000 * 1000,
-        startPosition: startAt, manifestLoadingMaxRetry: 4,
-        levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000,
+      // fragLoadingTimeOut: зависший кусок ждём 8 с вместо стандартных 20 — и сразу запрашиваем заново,
+      // это разница между незаметной заминкой и «видео встало».
+      hls = new Hls({ maxBufferLength: 55, maxMaxBufferLength: 60, backBufferLength: 30, maxBufferSize: 60 * 1000 * 1000,
+        startPosition: startAt, manifestLoadingMaxRetry: 4, manifestLoadingTimeOut: 8000,
+        levelLoadingMaxRetry: 4, levelLoadingTimeOut: 8000,
+        fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 1000, fragLoadingTimeOut: 8000,
         capLevelToPlayerSize: false, abrEwmaDefaultEstimate: (network.state.bandwidthMbps || 3) * 1e6 });
       const h = hls;
       h.on(Hls.Events.MANIFEST_PARSED, () => {

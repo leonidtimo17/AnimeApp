@@ -81,6 +81,7 @@ class PlayerWindow(QWidget):
 
         self.release = None
         self._new_source_loading = False
+        self._stream_url = None      # настоящий адрес потока (плеер читает его копию с 127.0.0.1)
         self.current_dub = None
         self.dub_name = ""
         self.episodes = []
@@ -569,7 +570,12 @@ class PlayerWindow(QWidget):
         self._update_quality_ui()
         self.pending_seek = position if position and position > 3000 else None
         self._new_source_loading = False  # перемотку применяем только к новому потоку (см. _on_status)
-        url = QUrl(ep["streams"][q])
+        # Кусочки потока качает приложение и отдаёт их с 127.0.0.1: у встроенного загрузчика Qt
+        # на медленном канале видео замирает намертво (см. infrastructure/streaming/proxy.py).
+        if self._stream_url and self._stream_url != ep["streams"][q]:
+            self.ctx.streaming.forget(self._stream_url)      # прошлая серия/качество — освобождаем память
+        self._stream_url = ep["streams"][q]
+        url = QUrl(self.ctx.streaming.local_url(self._stream_url))
         if self.player.source() == url:
             self.player.setSource(QUrl())  # та же ссылка — Qt не перезагрузит поток без сброса
         self.player.setSource(url)
@@ -1090,6 +1096,9 @@ class PlayerWindow(QWidget):
         self.save_progress()
         self.player.stop()
         self.player.setSource(QUrl())
+        if self._stream_url:
+            self.ctx.streaming.forget(self._stream_url)
+            self._stream_url = None
         self.count_timer.stop()
         self.next_box.hide()
         self.progress_saved.emit()

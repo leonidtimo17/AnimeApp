@@ -268,6 +268,8 @@ class HttpCacheRepository:
     """Ответы серверов (со временем получения): для кэша и работы без интернета."""
 
     MAX_AGE_DAYS = 14
+    MAX_BYTES = 80_000_000      # больше — самые старые ответы удаляются
+    TARGET_BYTES = 50_000_000   # столько оставляем после уборки
 
     def __init__(self, db: Database):
         self.db = db
@@ -283,7 +285,15 @@ class HttpCacheRepository:
         self.db.execute("INSERT OR REPLACE INTO http_cache (url, ts, body) VALUES (?,?,?)", (key, time.time(), body))
 
     def prune(self, max_age_days: int = MAX_AGE_DAYS) -> None:
+        """Уборка при запуске: сначала по возрасту, потом по объёму (самые старые уходят первыми)."""
         self.db.execute("DELETE FROM http_cache WHERE ts < ?", (time.time() - max_age_days * 86400,))
+        size = self.stats()[1]
+        if size > self.MAX_BYTES:
+            self.db.execute(
+                """DELETE FROM http_cache WHERE url IN (
+                       SELECT url FROM (SELECT url, SUM(LENGTH(body)) OVER (ORDER BY ts) AS running FROM http_cache)
+                       WHERE running <= ?)""",
+                (size - self.TARGET_BYTES,))
 
     def clear(self) -> None:
         self.db.execute("DELETE FROM http_cache")

@@ -34,6 +34,7 @@ class AppContext(QObject):
         self.anilibria = s.anilibria
         self.shikimori_api = s.shikimori_api
         self.sleep = s.sleep
+        self.streaming = s.streaming
         s.library.changed.connect(self.library_changed.emit)
         s.progress.changed.connect(self.library_changed.emit)
 
@@ -65,3 +66,4 @@ class Services:
     anilibria: object
     shikimori_api: object
     sleep: object
+    streaming: object
